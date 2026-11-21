@@ -85,6 +85,74 @@ impl Delivery {
     }
 }
 
+/// Prévia de um link, feita por quem mandou (quem recebe não acessa o site).
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct LinkPreview {
+    /// O endereço.
+    pub u: String,
+    /// Título.
+    #[serde(default)]
+    pub t: String,
+    /// Descrição.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub d: String,
+    /// Miniatura (data URL pequena).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub i: Option<String>,
+}
+
+impl LinkPreview {
+    /// Apara o que veio de fora. `None` se não sobrar nada útil.
+    pub fn clean(&self) -> Option<LinkPreview> {
+        let u: String = self.u.trim().chars().take(600).collect();
+        if !(u.starts_with("https://") || u.starts_with("http://")) {
+            return None;
+        }
+        let t = corta(&self.t, 140);
+        if t.is_empty() {
+            return None;
+        }
+        let i = self.i.as_ref().filter(|x| {
+            x.len() <= 40_000 && ["data:image/webp;base64,", "data:image/jpeg;base64,", "data:image/png;base64,"].iter().any(|p| x.starts_with(p))
+        });
+        Some(LinkPreview { u, t, d: corta(&self.d, 240), i: i.cloned() })
+    }
+}
+
+/// Status personalizado: emoji, texto, "não perturbe" e até quando vale.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct CustomStatus {
+    /// Emoji (opcional).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub e: String,
+    /// Texto ("Jogando Valorant").
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub t: String,
+    /// Não perturbe.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub dnd: bool,
+    /// Some sozinho neste horário (ms); 0 = não some.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub x: i64,
+}
+
+fn is_zero(x: &i64) -> bool {
+    *x == 0
+}
+
+impl CustomStatus {
+    /// Apara o que veio de fora; `None` se estiver vazio ou vencido.
+    pub fn clean(&self, agora_ms: i64) -> Option<CustomStatus> {
+        let e: String = self.e.chars().filter(|c| !c.is_control()).take(8).collect();
+        let t = corta(&self.t, 80);
+        let x = self.x.max(0);
+        if (e.is_empty() && t.is_empty() && !self.dnd) || (x > 0 && x <= agora_ms) {
+            return None;
+        }
+        Some(CustomStatus { e, t, dnd: self.dnd, x })
+    }
+}
+
 /// Música tocando agora (por enquanto, só do Spotify).
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct Listening {
@@ -161,6 +229,9 @@ pub enum AppMessage {
         /// Jogos favoritos (versões antigas não mandam: fica como estava).
         #[serde(default, skip_serializing_if = "Option::is_none")]
         g: Option<Vec<String>>,
+        /// Status personalizado (versões antigas não mandam).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        st: Option<CustomStatus>,
     },
     /// Banner do perfil (data URL; vazio tira o banner). Separado do perfil
     /// porque foto e banner juntos passariam do tamanho que os servidores
@@ -232,6 +303,70 @@ pub enum AppMessage {
     /// Sinalização de chamada. Efêmera, menos `missed`, que fica no histórico.
     #[serde(rename = "call")]
     Call(CallSignal),
+    /// Texto novo de uma mensagem (só quem escreveu pode editar).
+    #[serde(rename = "edit")]
+    Edit { id: String, x: String },
+    /// Fixa (`on` = 1) ou desafixa uma mensagem na conversa.
+    #[serde(rename = "pin")]
+    Pin {
+        id: String,
+        #[serde(default, deserialize_with = "num_ou_bool")]
+        on: u8,
+    },
+    /// Enquete: pergunta, opções e se aceita várias respostas (`m` = 1).
+    #[serde(rename = "poll")]
+    Poll {
+        q: String,
+        o: Vec<String>,
+        #[serde(default, deserialize_with = "num_ou_bool")]
+        m: u8,
+    },
+    /// Voto numa enquete (lista vazia tira o voto).
+    #[serde(rename = "vote")]
+    Vote {
+        id: String,
+        #[serde(default)]
+        v: Vec<i64>,
+    },
+    /// Online (`on`), ausente (`away`) ou escondido (`off`). Sempre efêmero.
+    #[serde(rename = "pres")]
+    Presence { s: String },
+    /// Evento: título, quando (ms) e descrição.
+    #[serde(rename = "evt")]
+    Event {
+        ti: String,
+        at: i64,
+        #[serde(default, skip_serializing_if = "String::is_empty")]
+        d: String,
+    },
+    /// Resposta a um evento: `y` vou, `m` talvez, `n` não vou (vazio tira).
+    #[serde(rename = "rsvp")]
+    Rsvp { id: String, r: String },
+    /// Quem recebeu abriu a mídia de visualização única (só em conversa a dois).
+    #[serde(rename = "voo")]
+    ViewOnceOpened { id: String },
+    /// Para a própria conta: "este aparelho existe" (nome, sistema).
+    #[serde(rename = "dev")]
+    Device { dev: String, n: String, p: String },
+    /// Para a própria conta: o aparelho `dev` deve sair e apagar a conta dele.
+    #[serde(rename = "devoff")]
+    DeviceOff { dev: String },
+    /// Para a própria conta: "sou um aparelho novo, me mande o que você tem".
+    #[serde(rename = "sreq")]
+    SyncReq { dev: String },
+    /// Para a própria conta: contatos, grupos e ajustes (retrato sem mensagens).
+    #[serde(rename = "sync")]
+    Sync { dev: String, d: serde_json::Value },
+}
+
+/// Aceita `1`/`0` e também `true`/`false` (o JavaScript manda os dois).
+fn num_ou_bool<'de, D: serde::Deserializer<'de>>(d: D) -> Result<u8, D::Error> {
+    let v = serde_json::Value::deserialize(d)?;
+    Ok(match v {
+        serde_json::Value::Bool(b) => b as u8,
+        serde_json::Value::Number(n) => (n.as_i64().unwrap_or(0) != 0) as u8,
+        _ => 0,
+    })
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -283,6 +418,12 @@ pub struct MediaHeader {
     /// Quando o áudio é um som do soundboard criado pela pessoa.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sb: Option<SoundMeta>,
+    /// Nome do arquivo (só para `type: "file"`).
+    #[serde(default, rename = "fn", skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// Visualização única: 1 = abre uma vez e some.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vo: Option<u8>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -290,6 +431,8 @@ pub struct MediaHeader {
 pub enum MediaKind {
     Audio,
     Image,
+    /// Documento qualquer (PDF, zip…), até 5 MB.
+    File,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -376,7 +519,7 @@ impl AppMessage {
     /// Se esta mensagem deve ir em envelope efêmero (não guardada pelo servidor).
     pub fn is_ephemeral(&self) -> bool {
         match self {
-            AppMessage::Typing | AppMessage::Room { .. } | AppMessage::Listening(_) => true,
+            AppMessage::Typing | AppMessage::Room { .. } | AppMessage::Listening(_) | AppMessage::Presence { .. } => true,
             AppMessage::Call(c) => c.a != CallAction::Missed,
             _ => false,
         }
@@ -386,6 +529,22 @@ impl AppMessage {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn editar_fixar_enquete_e_online_como_o_celular_manda() {
+        // O celular manda `on` como número e às vezes como booleano.
+        assert_eq!(AppMessage::parse(r#"{"t":"pin","id":"a","on":1}"#), Some(AppMessage::Pin { id: "a".into(), on: 1 }));
+        assert_eq!(AppMessage::parse(r#"{"t":"pin","id":"a","on":false}"#), Some(AppMessage::Pin { id: "a".into(), on: 0 }));
+        assert_eq!(
+            AppMessage::parse(r#"{"t":"poll","q":"Dia?","o":["Sáb","Dom"],"m":1}"#),
+            Some(AppMessage::Poll { q: "Dia?".into(), o: vec!["Sáb".into(), "Dom".into()], m: 1 })
+        );
+        assert_eq!(AppMessage::parse(r#"{"t":"vote","id":"x","v":[1]}"#), Some(AppMessage::Vote { id: "x".into(), v: vec![1] }));
+        assert_eq!(AppMessage::parse(r#"{"t":"edit","id":"x","x":"novo"}"#), Some(AppMessage::Edit { id: "x".into(), x: "novo".into() }));
+        let p = AppMessage::Presence { s: "away".into() };
+        assert!(p.is_ephemeral());
+        assert_eq!(p.to_json(), r#"{"t":"pres","s":"away"}"#);
+    }
 
     #[test]
     fn ouvindo_agora_limpa_e_monta_o_link() {
@@ -445,6 +604,7 @@ mod tests {
     fn mensagens_internas_vao_e_voltam_em_json() {
         let casos: Vec<AppMessage> = vec![
             AppMessage::Profile {
+                st: None,
                 n: "Ana".into(),
                 s: "testando".into(),
                 c: 3,
@@ -539,6 +699,8 @@ mod tests {
     #[test]
     fn cabecalho_de_midia_omite_o_que_nao_tem() {
         let h = MediaHeader {
+            name: None,
+            vo: None,
             mid: "m1".into(),
             kind: MediaKind::Image,
             mime: "image/webp".into(),

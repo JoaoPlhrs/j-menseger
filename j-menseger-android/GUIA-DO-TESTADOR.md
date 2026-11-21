@@ -1,20 +1,29 @@
-# J-Menseger 0.5.0-beta (Android) — guia para quem testa
+# J-Menseger 0.7.0-beta (Android) — guia para quem testa
 
-## ⚠️ Antes de instalar: esta versão NÃO instala por cima da 0.4
+> **Já tem a 0.5 ou a 0.6?** A 0.7 instala por cima normalmente (mesma chave),
+> e o próprio app avisa quando sai versão nova.
 
-A chave que assinava as versões 0.3 e 0.4 se perdeu. O Android só atualiza
-um app assinado pela mesma chave, então:
+## O que há de novo na 0.7
 
-1. No app antigo: **Ajustes → Chave de recuperação** e anote as **12
-   palavras** (no papel). Sem elas a conta não volta.
-2. Desinstale o J-Menseger antigo.
-3. Instale o `J-Menseger-0.5.0-beta.apk` e escolha **Restaurar** com as 12
-   palavras. Sua conta e seus contatos voltam; o histórico de conversas
-   guardado só no celular antigo, não.
+- **Responder pela notificação**: "Responder" e "Marcar como lida" direto na
+  notificação, sem abrir o app. Com PIN ligado, só "Marcar como lida".
+- **Arquivos** (PDF, zip, documentos… até 5 MB): botão + → Arquivo.
+- **Encaminhar** mensagem para outra conversa ou grupo: segure a mensagem →
+  Encaminhar.
+- **Visualização única**: foto ou áudio que só abre uma vez.
+- **Prévia de links**: título e imagem do site na conversa (para desligar:
+  Ajustes → Privacidade e segurança → Prévia dos links que eu mando).
+- **Poderes por cargo** nos grupos: fixar, apagar mensagens de outros,
+  mencionar @todos.
+- **Eventos do grupo** ("Jogatina sábado 20h") com Vou / Talvez / Não vou e
+  lembrete antes de começar.
+- **Volume de cada pessoa** em chamadas e salas: toque na pessoa.
+- **Status personalizado** ("Jogando Valorant", "Não perturbe" — sem
+  notificações enquanto ligado): Ajustes → Status.
+- **Aparelhos conectados**: Ajustes → Aparelhos conectados, com
+  "Desconectar" (o outro aparelho sai da conta).
 
-Daqui para frente as próximas versões instalam por cima normalmente.
-
-## O que há de novo
+## Novidades anteriores (0.6)
 
 - **Código curto de convite** (ex.: `K7QF-9X2M`, vale 7 dias): Meu código →
   Gerar código curto. Para adicionar, digite o código curto da pessoa.

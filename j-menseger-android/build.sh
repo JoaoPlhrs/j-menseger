@@ -6,8 +6,8 @@
 #   KEYSTORE     chave de assinatura (padrão: keystore/jmenseger.jks, com a senha em keystore/senha.txt)
 set -euo pipefail
 cd "$(dirname "$0")"
-VERSAO="${VERSAO:-0.5.0-beta}"
-CODIGO="${CODIGO:-5}"
+VERSAO="${VERSAO:-0.7.0-beta}"
+CODIGO="${CODIGO:-7}"
 BT="${ANDROID_BT:-/opt/android/android-14}"
 AJ="${ANDROID_JAR:-/opt/android/android-34/android.jar}"
 KS="${KEYSTORE:-keystore/jmenseger.jks}"

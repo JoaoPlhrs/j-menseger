@@ -23,6 +23,9 @@ pbkdf2 = { version = "0.12", default-features = false, features = ["hmac"] }
 hex = "0.4"
 rand = "0.9"
 futures-util = "0.3"
+aes-gcm = "0.10"
+hmac = "0.12"
+flate2 = "1"
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["full"] }

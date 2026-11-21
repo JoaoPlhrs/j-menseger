@@ -187,6 +187,88 @@ pub async fn pick_audio() -> Result<Option<(String, Arc<Vec<f32>>)>, String> {
 }
 
 /// Salva uma foto recebida onde a pessoa escolher.
+/// Escolhe um documento qualquer para mandar (até 5 MB).
+pub async fn pick_file() -> Result<Option<(String, String, Vec<u8>)>, String> {
+    let Some(f) = rfd::AsyncFileDialog::new().set_title("Escolher arquivo").pick_file().await else {
+        return Ok(None);
+    };
+    let meta = tokio::fs::metadata(f.path()).await.map_err(|e| e.to_string())?;
+    if meta.len() > jm_core::media::MAX_FILE as u64 {
+        return Err("Arquivo grande demais: o limite é 5 MB.".into());
+    }
+    let bytes = tokio::fs::read(f.path()).await.map_err(|e| e.to_string())?;
+    let nome = f.file_name();
+    Ok(Some((nome.clone(), mime_of(&nome), bytes)))
+}
+
+/// Tipo do arquivo pela extensão (o bastante para o outro lado mostrar o ícone certo).
+pub fn mime_of(nome: &str) -> String {
+    let ext = nome.rsplit('.').next().unwrap_or("").to_ascii_lowercase();
+    match ext.as_str() {
+        "pdf" => "application/pdf",
+        "zip" => "application/zip",
+        "rar" => "application/vnd.rar",
+        "7z" => "application/x-7z-compressed",
+        "txt" => "text/plain",
+        "csv" => "text/csv",
+        "doc" => "application/msword",
+        "docx" => "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "xls" => "application/vnd.ms-excel",
+        "xlsx" => "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "ppt" => "application/vnd.ms-powerpoint",
+        "pptx" => "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        "mp4" => "video/mp4",
+        "mp3" => "audio/mpeg",
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        _ => "application/octet-stream",
+    }
+    .into()
+}
+
+/// Salva um arquivo recebido onde a pessoa escolher.
+pub async fn save_file(bytes: Vec<u8>, nome: String) -> Result<String, String> {
+    let Some(f) = rfd::AsyncFileDialog::new().set_title("Salvar arquivo").set_file_name(&nome).save_file().await else {
+        return Err(String::new());
+    };
+    tokio::fs::write(f.path(), bytes).await.map_err(|e| e.to_string())?;
+    Ok("Arquivo salvo".into())
+}
+
+/// Nome deste computador e o sistema, para a lista de aparelhos da conta.
+pub fn device_name() -> (String, String) {
+    let nome = std::env::var("COMPUTERNAME")
+        .or_else(|_| std::env::var("HOSTNAME"))
+        .ok()
+        .or_else(|| std::fs::read_to_string("/etc/hostname").ok().map(|s| s.trim().to_string()))
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "Computador".into());
+    let sistema = if cfg!(windows) {
+        "Windows"
+    } else if cfg!(target_os = "macos") {
+        "macOS"
+    } else {
+        "Linux"
+    };
+    (nome, sistema.into())
+}
+
+/// Grava o arquivo de backup onde a pessoa escolher.
+pub async fn save_backup(bytes: Vec<u8>) -> Result<String, String> {
+    let nome = format!("J-Menseger backup {}.jmbackup", chrono::Local::now().format("%Y-%m-%d"));
+    let Some(f) = rfd::AsyncFileDialog::new()
+        .set_title("Salvar backup")
+        .set_file_name(&nome)
+        .add_filter("Backup do J-Menseger", &["jmbackup"])
+        .save_file()
+        .await
+    else {
+        return Err(String::new());
+    };
+    tokio::fs::write(f.path(), bytes).await.map_err(|e| e.to_string())?;
+    Ok("Backup salvo. Guarde junto com suas palavras de recuperação.".into())
+}
+
 pub async fn save_photo(bytes: Vec<u8>, mime: String) -> Result<String, String> {
     let ext = if mime.contains("gif") {
         "gif"

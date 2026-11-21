@@ -31,6 +31,10 @@ use tokio::sync::mpsc;
 
 const DAY: i64 = 86_400;
 
+#[path = "snapshot.rs"]
+mod snapshot;
+pub use snapshot::{open as open_backup, seal as seal_backup, Restored};
+
 #[derive(Debug, thiserror::Error)]
 pub enum EngineError {
     #[error(transparent)]
@@ -75,6 +79,9 @@ pub struct Profile {
     pub banner: Option<String>,
     #[serde(default)]
     pub games: Vec<String>,
+    /// Status personalizado.
+    #[serde(default)]
+    pub status: Option<crate::messages::CustomStatus>,
 }
 
 /// Situação de um contato.
@@ -116,6 +123,9 @@ pub struct Contact {
     pub banner: Option<String>,
     #[serde(default)]
     pub games: Vec<String>,
+    /// Status personalizado que a pessoa mandou.
+    #[serde(default)]
+    pub cstatus: Option<crate::messages::CustomStatus>,
 }
 
 impl Contact {
@@ -152,7 +162,7 @@ pub struct ChatSummary {
 }
 
 /// Uma mensagem como a interface precisa dela.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Message {
     pub id: String,
     pub chat: String,
@@ -166,6 +176,12 @@ pub struct Message {
     pub reacts: BTreeMap<String, String>,
     /// Quando some (mensagem temporária), em milissegundos.
     pub exp: Option<i64>,
+    /// Quando foi editada pela última vez (ms), se foi.
+    pub edited: Option<i64>,
+    /// Encaminhada de outra conversa.
+    pub fwd: bool,
+    /// Prévia do link (feita por quem mandou).
+    pub lp: Option<crate::messages::LinkPreview>,
 }
 
 /// Dados de um convite, guardados na própria mensagem até a pessoa aceitar.
@@ -195,6 +211,12 @@ pub enum MessageBody {
     Media(MediaInfo),
     /// Convite para um grupo, com botão de entrar.
     Invite { lid: String, name: String, joined: bool, data: Option<Box<InviteData>> },
+    /// Enquete: pergunta, opções, se aceita várias respostas e os votos
+    /// (`{chave pública: [opções]}`).
+    Poll { q: String, o: Vec<String>, multi: bool, votes: BTreeMap<String, Vec<u8>> },
+    /// Evento do grupo (ou da conversa): título, quando (ms), descrição e
+    /// respostas (`{chave pública: "y" | "m" | "n"}`).
+    Event { title: String, at: i64, desc: String, rsvp: BTreeMap<String, String> },
     Deleted,
 }
 
@@ -206,6 +228,8 @@ impl MessageBody {
             MessageBody::Sound { .. } => "sound",
             MessageBody::Media(_) => "media",
             MessageBody::Invite { .. } => "invite",
+            MessageBody::Poll { .. } => "poll",
+            MessageBody::Event { .. } => "event",
             MessageBody::Deleted => "deleted",
         }
     }
@@ -222,6 +246,10 @@ impl MessageBody {
             MessageBody::Invite { lid, name, joined, data } => {
                 serde_json::json!({ "lid": lid, "text": name, "joined": joined, "inv": data }).to_string()
             }
+            MessageBody::Poll { q, o, multi, votes } => {
+                serde_json::json!({ "q": q, "o": o, "m": *multi as u8, "votes": votes }).to_string()
+            }
+            MessageBody::Event { title, at, desc, rsvp } => serde_json::json!({ "ti": title, "at": at, "d": desc, "rsvp": rsvp }).to_string(),
             MessageBody::Deleted => "{}".into(),
         }
     }
@@ -249,6 +277,18 @@ impl MessageBody {
                 name: text,
                 joined: v["joined"].as_bool().unwrap_or(false),
                 data: serde_json::from_value::<InviteData>(v["inv"].clone()).ok().map(Box::new),
+            },
+            "event" => MessageBody::Event {
+                title: v["ti"].as_str().unwrap_or_default().to_string(),
+                at: v["at"].as_i64().unwrap_or(0),
+                desc: v["d"].as_str().unwrap_or_default().to_string(),
+                rsvp: serde_json::from_value(v["rsvp"].clone()).unwrap_or_default(),
+            },
+            "poll" => MessageBody::Poll {
+                q: v["q"].as_str().unwrap_or_default().to_string(),
+                o: serde_json::from_value(v["o"].clone()).unwrap_or_default(),
+                multi: v["m"].as_i64().unwrap_or(0) != 0,
+                votes: serde_json::from_value(v["votes"].clone()).unwrap_or_default(),
             },
             _ => MessageBody::Deleted,
         }
@@ -299,6 +339,16 @@ pub enum EngineEvent {
     ProfileChanged,
     /// Mudou o que um contato está ouvindo.
     Listening { pk: String },
+    /// Um contato ficou online, ausente ou sumiu.
+    Presence { pk: String },
+    /// Mudaram as mensagens fixadas de uma conversa.
+    Pins { chat: String },
+    /// Mudou a lista de aparelhos da conta.
+    Devices,
+    /// Outro aparelho da conta mandou este sair: a conta foi apagada daqui.
+    RemoteLogout,
+    /// Chegaram contatos ou grupos de outro aparelho da mesma conta.
+    Synced { contacts: usize, groups: usize },
     /// Os ajustes mudaram.
     SettingsChanged,
 }
@@ -361,6 +411,12 @@ pub struct Settings {
     /// Esconder o conteúdo da janela em capturas de tela (Windows).
     #[serde(default)]
     pub lock_screenshots: bool,
+    /// Mostrar aos contatos quando estou online (e ver o deles).
+    #[serde(default = "sim")]
+    pub presence: bool,
+    /// Gerar prévia dos links que eu mando (meu aparelho acessa o site).
+    #[serde(default = "sim")]
+    pub link_previews: bool,
 }
 
 fn sim() -> bool {
@@ -381,6 +437,8 @@ impl Default for Settings {
             notifications: true,
             sounds: true,
             lock_screenshots: false,
+            presence: true,
+            link_previews: true,
         }
     }
 }
@@ -400,6 +458,12 @@ pub struct MediaMeta {
     pub th: Option<String>,
     /// Quando é um som próprio do soundboard.
     pub sb: Option<SoundMeta>,
+    /// Nome do arquivo (documentos).
+    pub name: Option<String>,
+    /// Visualização única (fotos e áudios).
+    pub view_once: bool,
+    /// Encaminhada de outra conversa.
+    pub fwd: bool,
 }
 
 /// Contas e chaves exportáveis.
@@ -439,6 +503,10 @@ struct State {
     listening: HashMap<String, (Listening, i64)>,
     /// O que eu estou ouvindo e quando avisei os contatos.
     my_listening: Option<(Listening, i64)>,
+    /// Online/ausente de cada contato e quando avisou.
+    presence: HashMap<String, (String, i64)>,
+    /// O que eu avisei por último e quando.
+    my_presence: Option<(String, i64)>,
 }
 
 /// Uma conversa como fica na tabela `chats`.
@@ -530,6 +598,8 @@ impl Engine {
                 rq_scheduled: false,
                 listening: HashMap::new(),
                 my_listening: None,
+                presence: HashMap::new(),
+                my_presence: None,
             })),
             events: tx,
             started: AtomicBool::new(false),
@@ -866,6 +936,13 @@ impl Engine {
         let mine = from == eu;
         let peer = if mine { protocol::tag_value(r, "p").map(|s| s.to_string()) } else { Some(from.clone()) };
         let Some(peer) = peer else { return Ok(()) };
+        // Mensagem da conta para ela mesma: sincronia entre aparelhos.
+        if mine && peer == eu && r.kind.as_u16() == KIND_APP {
+            if let Some(app) = AppMessage::parse(&r.content) {
+                self.on_self_app(app);
+            }
+            return Ok(());
+        }
         if !is_hex64(&peer) || peer == eu {
             return Ok(());
         }
@@ -884,6 +961,9 @@ impl Engine {
                 self.add_msg(
                     &key,
                     Message {
+                        fwd: protocol::tag_value(r, "fwd").is_some(),
+                        lp: protocol::tag_value(r, "lp").and_then(|j| serde_json::from_str::<crate::messages::LinkPreview>(j).ok()).and_then(|l| l.clean()),
+                        edited: None,
                         id: rid,
                         chat: key.clone(),
                         author: from.clone(),
@@ -944,7 +1024,7 @@ impl Engine {
                 self.save_contact(&snap)?;
                 let _ = self.events.send(EngineEvent::ContactChanged { pk: peer.into() });
             }
-            AppMessage::Profile { n, s, c, p, r: relays, g } if !mine => {
+            AppMessage::Profile { n, s, c, p, r: relays, g, st: cst } if !mine => {
                 self.ensure_contact(peer, ContactStatus::Request)?;
                 let snapshot = {
                     let mut st = self.state.lock().unwrap();
@@ -962,6 +1042,10 @@ impl Engine {
                     ct.relays = relays.iter().filter_map(|u| normalize_url(u)).take(5).collect();
                     if let Some(g) = &g {
                         ct.games = media::clean_games(g);
+                    }
+                    // Quem manda o perfil sem `st` (versão nova) tirou o status.
+                    if g.is_some() {
+                        ct.cstatus = cst.as_ref().and_then(|x| x.clean(now_ms()));
                     }
                     ct.clone()
                 };
@@ -1011,7 +1095,54 @@ impl Engine {
                 }
             }
             AppMessage::Delete { ids } => {
-                self.apply_delete(key, &ids.into_iter().take(100).collect::<Vec<_>>(), from)?;
+                self.apply_delete(key, &ids.into_iter().take(100).collect::<Vec<_>>(), from, false)?;
+            }
+            AppMessage::Edit { id, x } => self.apply_edit(key, &id, &x, from, ts)?,
+            AppMessage::Event { ti, at, d } => {
+                if !mine {
+                    self.ensure_contact(peer, ContactStatus::Request)?;
+                }
+                self.add_event(key, rid.clone(), from, mine, ts, &ti, at, &d, exp_of(r))?;
+            }
+            AppMessage::Rsvp { id, r: resp } => self.apply_rsvp(key, &id, &resp, from)?,
+            AppMessage::ViewOnceOpened { id } if !mine => self.mark_view_once_opened(key, &id, true)?,
+            AppMessage::Pin { id, on } => self.apply_pin(key, &id, on != 0)?,
+            AppMessage::Poll { q, o, m } => {
+                if !mine {
+                    self.ensure_contact(peer, ContactStatus::Request)?;
+                }
+                self.add_poll(key, rid.clone(), from, mine, ts, &q, &o, m != 0, exp_of(r))?;
+            }
+            AppMessage::Vote { id, v } => self.apply_vote(key, &id, &v, from)?,
+            AppMessage::Presence { s } if !mine => {
+                if eph && aceito {
+                    let s = match s.as_str() {
+                        "away" => "away",
+                        "off" => "off",
+                        "dnd" => "dnd",
+                        _ => "on",
+                    };
+                    let responder = {
+                        let mut st = self.state.lock().unwrap();
+                        let novo = st.presence.get(peer).is_none_or(|(_, q)| now_ms() - q > PRESENCE_TTL_MS);
+                        st.presence.insert(peer.to_string(), (s.to_string(), now_ms()));
+                        // Quem acabou de abrir o app não sabe de mim: respondo uma vez.
+                        match st.my_presence.clone() {
+                            Some((meu, _)) if novo && s != "off" && meu != "off" => Some(meu),
+                            _ => None,
+                        }
+                    };
+                    let _ = self.events.send(EngineEvent::Presence { pk: peer.into() });
+                    if let Some(meu) = responder {
+                        let me = Arc::clone(self);
+                        let chat = key.to_string();
+                        tokio::spawn(async move {
+                            let _ = me
+                                .send_app(&chat, &AppMessage::Presence { s: meu }, BuildOpts { ephemeral: true, no_ttl: true, no_self_copy: true, ..Default::default() })
+                                .await;
+                        });
+                    }
+                }
             }
             AppMessage::Ttl { v } => {
                 let v = (v as i64).clamp(0, 28 * DAY) as u32;
@@ -1036,6 +1167,9 @@ impl Engine {
                 self.add_msg(
                     key,
                     Message {
+                        fwd: false,
+                        lp: None,
+                        edited: None,
                         id: rid,
                         chat: key.into(),
                         author: from.into(),
@@ -1060,6 +1194,9 @@ impl Engine {
                 self.add_msg(
                     key,
                     Message {
+                        fwd: false,
+                        lp: None,
+                        edited: None,
                         id: rid,
                         chat: key.into(),
                         author: from.into(),
@@ -1118,6 +1255,9 @@ impl Engine {
                 self.add_msg(
                     &key,
                     Message {
+                        fwd: protocol::tag_value(r, "fwd").is_some(),
+                        lp: protocol::tag_value(r, "lp").and_then(|j| serde_json::from_str::<crate::messages::LinkPreview>(j).ok()).and_then(|l| l.clean()),
+                        edited: None,
                         id: rid,
                         chat: key.clone(),
                         author: from,
@@ -1278,6 +1418,9 @@ impl Engine {
                     self.add_msg(
                         &key,
                         Message {
+                            fwd: false,
+                            lp: None,
+                            edited: None,
                             id: rid.into(),
                             chat: key.clone(),
                             author: from.into(),
@@ -1295,7 +1438,37 @@ impl Engine {
             }
             AppMessage::Delete { ids } => {
                 if let Some(key) = key.filter(|_| !gone) {
-                    self.apply_delete(&key, &ids.into_iter().take(100).collect::<Vec<_>>(), from)?;
+                    self.apply_delete(&key, &ids.into_iter().take(100).collect::<Vec<_>>(), from, g.meta.can(from, "del"))?;
+                }
+            }
+            AppMessage::Edit { id, x } => {
+                if let Some(key) = key.filter(|_| !gone) {
+                    self.apply_edit(&key, &id, &x, from, ts)?;
+                }
+            }
+            AppMessage::Event { ti, at, d } => {
+                if let Some(key) = key.clone().filter(|_| !gone) {
+                    self.add_event(&key, rid.to_string(), from, mine, ts, &ti, at, &d, exp_of(r))?;
+                }
+            }
+            AppMessage::Rsvp { id, r: resp } => {
+                if let Some(key) = key.clone().filter(|_| !gone) {
+                    self.apply_rsvp(&key, &id, &resp, from)?;
+                }
+            }
+            AppMessage::Pin { id, on } => {
+                if let Some(key) = key.filter(|_| !gone && g.meta.can(from, "pin")) {
+                    self.apply_pin(&key, &id, on != 0)?;
+                }
+            }
+            AppMessage::Poll { q, o, m } => {
+                if let Some(key) = key.filter(|_| !gone) {
+                    self.add_poll(&key, rid.to_string(), from, mine, ts, &q, &o, m != 0, exp_of(r))?;
+                }
+            }
+            AppMessage::Vote { id, v } => {
+                if let Some(key) = key.filter(|_| !gone) {
+                    self.apply_vote(&key, &id, &v, from)?;
                 }
             }
             AppMessage::Room { ch, a } => {
@@ -1386,14 +1559,18 @@ impl Engine {
     pub fn preview(&self, m: &Message) -> String {
         match &m.body {
             MessageBody::Text(t) => t.clone(),
+            MessageBody::Media(md) if md.vo => if md.kind == MediaKind::Audio { "Áudio de visualização única".into() } else { "Foto de visualização única".into() },
             MessageBody::Media(md) => match (&md.sb, md.kind) {
                 (Some(sb), _) => format!("Som: {}", sb.n),
                 (None, MediaKind::Audio) => "Mensagem de voz".into(),
                 (None, MediaKind::Image) if md.mime.to_ascii_lowercase().starts_with("image/gif") => "GIF".into(),
                 (None, MediaKind::Image) => "Foto".into(),
+                (None, MediaKind::File) => format!("Arquivo: {}", md.name.clone().unwrap_or_default()),
             },
             MessageBody::Sound { .. } => "Som do soundboard".into(),
             MessageBody::Invite { name, .. } => format!("Convite para {name}"),
+            MessageBody::Poll { q, .. } => format!("Enquete: {q}"),
+            MessageBody::Event { title, .. } => format!("Evento: {title}"),
             MessageBody::Deleted => "Mensagem apagada".into(),
             MessageBody::System { sys, v, legacy } => {
                 if let Some(t) = legacy {
@@ -1497,7 +1674,9 @@ impl Engine {
 
     /// Apaga para todos: a mensagem vira "Mensagem apagada" — só se quem pediu
     /// for quem escreveu.
-    fn apply_delete(&self, key: &str, ids: &[String], from: &str) -> Result<()> {
+    /// `moderador`: quem pediu pode apagar mensagens dos outros (cargo com
+    /// o poder "del", num grupo).
+    fn apply_delete(&self, key: &str, ids: &[String], from: &str, moderador: bool) -> Result<()> {
         let eu = self.pk_hex();
         for id in ids {
             if !is_hex64(id) {
@@ -1506,7 +1685,7 @@ impl Engine {
             let msg = {
                 let store = self.store.lock().unwrap();
                 let Some(m) = store.get_msg(id)? else { continue };
-                if m.chat != key || m.author != from {
+                if m.chat != key || (m.author != from && !moderador) {
                     continue;
                 }
                 if let MessageBody::Media(md) = MessageBody::from_stored(&m.kind, &m.body) {
@@ -1769,18 +1948,38 @@ impl Engine {
 
     /// Manda texto, respondendo a outra mensagem.
     pub async fn send_text_with(self: &Arc<Self>, chat_key: &str, text: &str, reply: Option<&str>) -> Result<Message> {
+        self.send_text_full(chat_key, text, reply, false, None).await
+    }
+
+    /// Texto com tudo: resposta, encaminhada e prévia do link.
+    pub async fn send_text_full(
+        self: &Arc<Self>,
+        chat_key: &str,
+        text: &str,
+        reply: Option<&str>,
+        fwd: bool,
+        lp: Option<crate::messages::LinkPreview>,
+    ) -> Result<Message> {
         let text: String = text.trim().chars().take(6000).collect();
         if text.is_empty() {
             return Err(erro("mensagem vazia"));
         }
         self.check_group_joined(chat_key)?;
-        let tags = match reply.filter(|r| is_hex64(r)) {
+        let mut tags = match reply.filter(|r| is_hex64(r)) {
             Some(r) => vec![Tag::parse(["e", r, "", "reply"]).map_err(|e| erro(e.to_string()))?],
             None => Vec::new(),
         };
+        if fwd {
+            tags.push(Tag::custom("fwd", ["1"]));
+        }
+        let lp = lp.and_then(|l| l.clean());
+        if let Some(l) = &lp {
+            tags.push(Tag::custom("lp", [serde_json::to_string(l).unwrap_or_default()]));
+        }
         let b = self.build(chat_key, KIND_TEXT, text.clone(), tags, BuildOpts::default())?;
         self.ensure_dm_contact(chat_key).await?;
         let msg = Message {
+            edited: None,
             id: b.id.clone(),
             chat: chat_key.into(),
             author: self.pk_hex(),
@@ -1791,6 +1990,8 @@ impl Engine {
             reply: reply.map(|s| s.to_string()),
             reacts: BTreeMap::new(),
             exp: None,
+            fwd,
+            lp,
         };
         self.local_send(chat_key, msg, &b).await
     }
@@ -1824,6 +2025,9 @@ impl Engine {
         let b = self.build(chat_key, KIND_APP, AppMessage::Sound { id: id.into() }.to_json(), Vec::new(), BuildOpts::default())?;
         self.ensure_dm_contact(chat_key).await?;
         let msg = Message {
+            fwd: false,
+            lp: None,
+            edited: None,
             id: b.id.clone(),
             chat: chat_key.into(),
             author: self.pk_hex(),
@@ -1866,9 +2070,466 @@ impl Engine {
         Ok(())
     }
 
+    /* ---------------- visualização única e encaminhar ---------------- */
+
+    /// Marca a mídia de visualização única como aberta e apaga os bytes.
+    /// `by_peer`: quem abriu foi a outra pessoa (aviso chegou pela rede).
+    fn mark_view_once_opened(&self, key: &str, id: &str, by_peer: bool) -> Result<()> {
+        if !is_hex64(id) {
+            return Ok(());
+        }
+        let eu = self.pk_hex();
+        let msg = {
+            let store = self.store.lock().unwrap();
+            let Some(sm) = store.get_msg(id)? else { return Ok(()) };
+            if sm.chat != key {
+                return Ok(());
+            }
+            let mut m = from_stored(sm, &eu);
+            // O aviso de "abriu" só vale para quem mandou.
+            if by_peer && !m.from_me {
+                return Ok(());
+            }
+            let MessageBody::Media(info) = &mut m.body else { return Ok(()) };
+            if !info.vo || info.opened {
+                return Ok(());
+            }
+            info.opened = true;
+            info.th = None;
+            store.delete_media(&info.mid)?;
+            store.update_msg(&to_stored(&m))?;
+            m
+        };
+        let _ = self.events.send(EngineEvent::MessageChanged { chat: key.into(), message: Box::new(msg) });
+        Ok(())
+    }
+
+    /// Abre uma mídia de visualização única recebida: devolve os bytes uma
+    /// vez e apaga em seguida. Em conversa a dois, avisa quem mandou.
+    pub async fn open_view_once(self: &Arc<Self>, chat_key: &str, id: &str) -> Result<Vec<u8>> {
+        let m = self.message(id).ok_or_else(|| erro("mensagem não encontrada"))?;
+        let MessageBody::Media(info) = &m.body else { return Err(erro("não é mídia")) };
+        if !info.vo || info.opened || m.from_me {
+            return Err(erro("Esta mídia já foi aberta."));
+        }
+        if !info.ready {
+            return Err(erro("Ainda chegando…"));
+        }
+        let bytes = self.media_bytes(&info.mid).ok_or_else(|| erro("mídia indisponível"))?;
+        self.mark_view_once_opened(chat_key, id, false)?;
+        if chat_key.starts_with("dm:") {
+            let _ = self
+                .send_app(chat_key, &AppMessage::ViewOnceOpened { id: id.into() }, BuildOpts { no_ttl: true, no_self_copy: true, ..Default::default() })
+                .await;
+        }
+        Ok(bytes)
+    }
+
+    /// Encaminha uma mensagem (texto, foto, áudio, arquivo ou som) para outra
+    /// conversa. Visualização única não pode ser encaminhada.
+    pub async fn forward(self: &Arc<Self>, id: &str, to: &str) -> Result<Message> {
+        let m = self.message(id).ok_or_else(|| erro("mensagem não encontrada"))?;
+        match &m.body {
+            MessageBody::Text(t) => self.send_text_full(to, t, None, true, m.lp.clone()).await,
+            MessageBody::Sound { id: s } => self.send_sound(to, s).await,
+            MessageBody::Media(info) => {
+                if info.vo {
+                    return Err(erro("Visualização única não pode ser encaminhada."));
+                }
+                if !info.ready {
+                    return Err(erro("A mídia ainda não chegou inteira."));
+                }
+                let bytes = self.media_bytes(&info.mid).ok_or_else(|| erro("mídia indisponível"))?;
+                let meta = MediaMeta {
+                    kind: Some(info.kind),
+                    mime: info.mime.clone(),
+                    dur: info.dur.map(|d| d as f64),
+                    wf: info.wf.clone(),
+                    w: info.w,
+                    h: info.h,
+                    th: info.th.clone(),
+                    sb: info.sb.clone(),
+                    name: info.name.clone(),
+                    view_once: false,
+                    fwd: true,
+                };
+                self.send_media(to, bytes, meta).await
+            }
+            _ => Err(erro("Este tipo de mensagem não pode ser encaminhado.")),
+        }
+    }
+
+    /* ---------------- editar, fixar, enquetes ---------------- */
+
+    /// Troca o texto de uma mensagem — só se quem pediu for quem escreveu, e
+    /// só texto. Uma edição mais velha que a última aplicada é ignorada.
+    fn apply_edit(&self, key: &str, id: &str, x: &str, from: &str, ts: i64) -> Result<()> {
+        if !is_hex64(id) {
+            return Ok(());
+        }
+        let texto = clamp_keep(x, 6000);
+        if texto.trim().is_empty() {
+            return Ok(());
+        }
+        let eu = self.pk_hex();
+        let msg = {
+            let store = self.store.lock().unwrap();
+            let Some(sm) = store.get_msg(id)? else { return Ok(()) };
+            if sm.chat != key || sm.author != from || sm.kind != "text" {
+                return Ok(());
+            }
+            let mut m = from_stored(sm, &eu);
+            if m.edited.is_some_and(|e| e > ts) {
+                return Ok(());
+            }
+            m.body = MessageBody::Text(texto.clone());
+            m.edited = Some(ts);
+            store.update_msg(&to_stored(&m))?;
+            let mut c = chat_for(&store, key);
+            if c.last_id.as_deref() == Some(id) {
+                c.last_text = texto;
+                save_chat(&store, &c)?;
+            }
+            m
+        };
+        let _ = self.events.send(EngineEvent::MessageChanged { chat: key.into(), message: Box::new(msg) });
+        let _ = self.events.send(EngineEvent::ChatsChanged);
+        Ok(())
+    }
+
+    /// Edita uma mensagem sua de texto, aqui e para todos.
+    pub async fn edit_message(self: &Arc<Self>, chat_key: &str, id: &str, text: &str) -> Result<()> {
+        let text: String = text.trim().chars().take(6000).collect();
+        if text.is_empty() {
+            return Ok(());
+        }
+        self.apply_edit(chat_key, id, &text, &self.pk_hex(), now_ms())?;
+        self.send_app(chat_key, &AppMessage::Edit { id: id.into(), x: text }, BuildOpts { no_ttl: true, ..Default::default() })
+            .await?;
+        Ok(())
+    }
+
+    /// Mensagens fixadas de uma conversa (a mais recente primeiro).
+    pub fn pins(&self, chat_key: &str) -> Vec<String> {
+        self.store.lock().unwrap().get_kv::<Vec<String>>(&format!("pins:{chat_key}")).ok().flatten().unwrap_or_default()
+    }
+
+    fn apply_pin(&self, key: &str, id: &str, on: bool) -> Result<()> {
+        if !is_hex64(id) {
+            return Ok(());
+        }
+        let mut p = self.pins(key);
+        p.retain(|x| x != id);
+        if on {
+            p.insert(0, id.to_string());
+        }
+        p.truncate(50);
+        self.store.lock().unwrap().set_kv(&format!("pins:{key}"), &p)?;
+        let _ = self.events.send(EngineEvent::Pins { chat: key.into() });
+        Ok(())
+    }
+
+    /// Fixa ou desafixa uma mensagem para todos da conversa.
+    pub async fn pin_message(self: &Arc<Self>, chat_key: &str, id: &str, on: bool) -> Result<()> {
+        self.apply_pin(chat_key, id, on)?;
+        self.send_app(chat_key, &AppMessage::Pin { id: id.into(), on: on as u8 }, BuildOpts { no_ttl: true, ..Default::default() })
+            .await?;
+        Ok(())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn add_poll(&self, key: &str, id: String, from: &str, mine: bool, ts: i64, q: &str, o: &[String], multi: bool, exp: Option<i64>) -> Result<()> {
+        let q = clamp(q, 200);
+        let o: Vec<String> = o.iter().map(|x| clamp(x, 80)).filter(|x| !x.is_empty()).take(10).collect();
+        if q.is_empty() || o.len() < 2 {
+            return Ok(());
+        }
+        self.add_msg(
+            key,
+            Message {
+                fwd: false,
+                lp: None,
+                id,
+                chat: key.into(),
+                author: from.into(),
+                from_me: mine,
+                ts,
+                body: MessageBody::Poll { q, o, multi, votes: BTreeMap::new() },
+                status: mine.then_some(Delivery::Sent),
+                reply: None,
+                reacts: BTreeMap::new(),
+                exp,
+                edited: None,
+            },
+            !mine,
+        )?;
+        Ok(())
+    }
+
+    /// Manda uma enquete (2 a 10 opções).
+    pub async fn send_poll(self: &Arc<Self>, chat_key: &str, q: &str, opts: &[String], multi: bool) -> Result<Message> {
+        self.check_group_joined(chat_key)?;
+        let q = clamp(q, 200);
+        let o: Vec<String> = opts.iter().map(|x| clamp(x, 80)).filter(|x| !x.is_empty()).take(10).collect();
+        if q.is_empty() || o.len() < 2 {
+            return Err(erro("Escreva a pergunta e pelo menos duas opções."));
+        }
+        let app = AppMessage::Poll { q: q.clone(), o: o.clone(), m: multi as u8 };
+        let b = self.build(chat_key, KIND_APP, app.to_json(), Vec::new(), BuildOpts::default())?;
+        self.ensure_dm_contact(chat_key).await?;
+        let msg = Message {
+            fwd: false,
+            lp: None,
+            id: b.id.clone(),
+            chat: chat_key.into(),
+            author: self.pk_hex(),
+            from_me: true,
+            ts: b.created_ms,
+            body: MessageBody::Poll { q, o, multi, votes: BTreeMap::new() },
+            status: None,
+            reply: None,
+            reacts: BTreeMap::new(),
+            exp: None,
+            edited: None,
+        };
+        self.local_send(chat_key, msg, &b).await
+    }
+
+    fn apply_vote(&self, key: &str, id: &str, v: &[i64], from: &str) -> Result<()> {
+        if !is_hex64(id) {
+            return Ok(());
+        }
+        let eu = self.pk_hex();
+        let msg = {
+            let store = self.store.lock().unwrap();
+            let Some(sm) = store.get_msg(id)? else { return Ok(()) };
+            if sm.chat != key || sm.kind != "poll" {
+                return Ok(());
+            }
+            let mut m = from_stored(sm, &eu);
+            let MessageBody::Poll { o, multi, votes, .. } = &mut m.body else { return Ok(()) };
+            let mut escolha: Vec<u8> = Vec::new();
+            for x in v {
+                if *x >= 0 && (*x as usize) < o.len() && !escolha.contains(&(*x as u8)) {
+                    escolha.push(*x as u8);
+                }
+            }
+            if !*multi {
+                escolha.truncate(1);
+            }
+            if escolha.is_empty() {
+                votes.remove(from);
+            } else {
+                votes.insert(from.to_string(), escolha);
+            }
+            store.update_msg(&to_stored(&m))?;
+            m
+        };
+        let _ = self.events.send(EngineEvent::MessageChanged { chat: key.into(), message: Box::new(msg) });
+        Ok(())
+    }
+
+    /// Vota numa enquete (lista vazia tira o voto).
+    pub async fn vote(self: &Arc<Self>, chat_key: &str, id: &str, escolha: &[u8]) -> Result<()> {
+        let v: Vec<i64> = escolha.iter().map(|x| *x as i64).collect();
+        self.apply_vote(chat_key, id, &v, &self.pk_hex())?;
+        self.send_app(chat_key, &AppMessage::Vote { id: id.into(), v }, BuildOpts { no_ttl: true, ..Default::default() }).await?;
+        Ok(())
+    }
+
+    /* ---------------- eventos ---------------- */
+
+    /// Eventos que começam dentro de `antes_ms` e ainda não foram lembrados,
+    /// e a que a pessoa não respondeu "não vou". Cada um é lembrado uma vez.
+    pub fn due_event_reminders(&self, antes_ms: i64) -> Vec<(String, String, i64)> {
+        let eu = self.pk_hex();
+        let agora = now_ms();
+        let store = self.store.lock().unwrap();
+        let mut avisados: Vec<String> = store.get_kv("evt_avisados").ok().flatten().unwrap_or_default();
+        let Ok(mut st) = store.raw().prepare("SELECT id, chat, author, kind, ts, body, status, exp, reply, reacts FROM msgs WHERE kind = 'event'") else { return Vec::new() };
+        let linhas: Vec<StoredMsg> = st
+            .query_map([], |r| {
+                Ok(StoredMsg { id: r.get(0)?, chat: r.get(1)?, author: r.get(2)?, kind: r.get(3)?, ts: r.get(4)?, body: r.get(5)?, status: r.get(6)?, exp: r.get(7)?, reply: r.get(8)?, reacts: r.get(9)? })
+            })
+            .map(|it| it.filter_map(|x| x.ok()).collect())
+            .unwrap_or_default();
+        drop(st);
+        let mut v = Vec::new();
+        for sm in linhas {
+            if avisados.contains(&sm.id) {
+                continue;
+            }
+            let m = from_stored(sm, &eu);
+            if let MessageBody::Event { title, at, rsvp, .. } = &m.body {
+                let vou = rsvp.get(&eu).map(|r| r != "n").unwrap_or(true);
+                if *at > agora - 60_000 && *at - agora <= antes_ms && vou {
+                    avisados.push(m.id.clone());
+                    v.push((m.chat.clone(), title.clone(), *at));
+                }
+            }
+        }
+        if !v.is_empty() {
+            let n = avisados.len();
+            if n > 300 {
+                avisados.drain(..n - 300);
+            }
+            let _ = store.set_kv("evt_avisados", &avisados);
+        }
+        v
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn add_event(&self, key: &str, id: String, from: &str, mine: bool, ts: i64, ti: &str, at: i64, d: &str, exp: Option<i64>) -> Result<()> {
+        let title = clamp(ti, 120);
+        // Datas absurdas (antes de 2020 ou depois de 2100) não entram.
+        if title.is_empty() || !(1_577_836_800_000..4_102_444_800_000).contains(&at) {
+            return Ok(());
+        }
+        self.add_msg(
+            key,
+            Message {
+                id,
+                chat: key.into(),
+                author: from.into(),
+                from_me: mine,
+                ts,
+                body: MessageBody::Event { title, at, desc: clamp(d, 500), rsvp: BTreeMap::new() },
+                status: mine.then_some(Delivery::Sent),
+                reply: None,
+                reacts: BTreeMap::new(),
+                exp,
+                edited: None,
+                fwd: false,
+                lp: None,
+            },
+            !mine,
+        )?;
+        Ok(())
+    }
+
+    /// Marca um evento (título, quando em ms, descrição).
+    pub async fn send_event(self: &Arc<Self>, chat_key: &str, title: &str, at: i64, desc: &str) -> Result<Message> {
+        self.check_group_joined(chat_key)?;
+        let title = clamp(title, 120);
+        if title.is_empty() {
+            return Err(erro("Dê um nome ao evento."));
+        }
+        if at < now_ms() - 3_600_000 {
+            return Err(erro("A data do evento já passou."));
+        }
+        let desc = clamp(desc, 500);
+        let app = AppMessage::Event { ti: title.clone(), at, d: desc.clone() };
+        let b = self.build(chat_key, KIND_APP, app.to_json(), Vec::new(), BuildOpts::default())?;
+        self.ensure_dm_contact(chat_key).await?;
+        let msg = Message {
+            id: b.id.clone(),
+            chat: chat_key.into(),
+            author: self.pk_hex(),
+            from_me: true,
+            ts: b.created_ms,
+            body: MessageBody::Event { title, at, desc, rsvp: BTreeMap::new() },
+            status: None,
+            reply: None,
+            reacts: BTreeMap::new(),
+            exp: None,
+            edited: None,
+            fwd: false,
+            lp: None,
+        };
+        self.local_send(chat_key, msg, &b).await
+    }
+
+    fn apply_rsvp(&self, key: &str, id: &str, resp: &str, from: &str) -> Result<()> {
+        if !is_hex64(id) {
+            return Ok(());
+        }
+        let eu = self.pk_hex();
+        let msg = {
+            let store = self.store.lock().unwrap();
+            let Some(sm) = store.get_msg(id)? else { return Ok(()) };
+            if sm.chat != key || sm.kind != "event" {
+                return Ok(());
+            }
+            let mut m = from_stored(sm, &eu);
+            let MessageBody::Event { rsvp, .. } = &mut m.body else { return Ok(()) };
+            match resp {
+                "y" | "m" | "n" => {
+                    rsvp.insert(from.to_string(), resp.to_string());
+                }
+                _ => {
+                    rsvp.remove(from);
+                }
+            }
+            store.update_msg(&to_stored(&m))?;
+            m
+        };
+        let _ = self.events.send(EngineEvent::MessageChanged { chat: key.into(), message: Box::new(msg) });
+        Ok(())
+    }
+
+    /// Responde a um evento: "y" vou, "m" talvez, "n" não vou, "" tira.
+    pub async fn rsvp(self: &Arc<Self>, chat_key: &str, id: &str, resp: &str) -> Result<()> {
+        self.apply_rsvp(chat_key, id, resp, &self.pk_hex())?;
+        self.send_app(chat_key, &AppMessage::Rsvp { id: id.into(), r: resp.into() }, BuildOpts { no_ttl: true, ..Default::default() }).await?;
+        Ok(())
+    }
+
+    /* ---------------- online / ausente ---------------- */
+
+    /// `Some("on")`, `Some("away")` ou `None` (sumiu, escondeu, ou eu escondi o meu).
+    pub fn presence_of(&self, pk: &str) -> Option<&'static str> {
+        if !self.settings().presence {
+            return None;
+        }
+        let st = self.state.lock().unwrap();
+        let (s, quando) = st.presence.get(pk)?;
+        if now_ms() - quando > PRESENCE_TTL_MS {
+            return None;
+        }
+        match s.as_str() {
+            "on" => Some("on"),
+            "away" => Some("away"),
+            "dnd" => Some("dnd"),
+            _ => None,
+        }
+    }
+
+    /// Conta aos contatos aceitos se estou online ou ausente. Pode chamar
+    /// sempre: só manda quando muda ou a cada [`PRESENCE_HEARTBEAT_MS`].
+    pub async fn set_presence(self: &Arc<Self>, away: bool, force: bool) {
+        let dnd = self.me().status.as_ref().and_then(|x| x.clean(now_ms())).is_some_and(|x| x.dnd);
+        let s = if !self.settings().presence { "off" } else if dnd { "dnd" } else if away { "away" } else { "on" };
+        let agora = now_ms();
+        {
+            let mut st = self.state.lock().unwrap();
+            if let Some((antes, quando)) = &st.my_presence {
+                if !force && antes == s && agora - quando < PRESENCE_HEARTBEAT_MS {
+                    return;
+                }
+                if !force && antes == "off" && s == "off" {
+                    return;
+                }
+            } else if s == "off" && !force {
+                return;
+            }
+            st.my_presence = Some((s.to_string(), agora));
+        }
+        let contatos: Vec<String> = self.contacts().into_iter().filter(|c| c.status == ContactStatus::Ok).map(|c| c.pk).collect();
+        let app = AppMessage::Presence { s: s.into() };
+        for pk in contatos {
+            let chat = ChatKey::Direct { peer: pk }.as_string();
+            let _ = self.send_app(&chat, &app, BuildOpts { ephemeral: true, no_ttl: true, no_self_copy: true, ..Default::default() }).await;
+        }
+    }
+
     /// Apaga para todos (só as suas mensagens).
     pub async fn delete_for_all(self: &Arc<Self>, chat_key: &str, ids: &[String]) -> Result<()> {
-        self.apply_delete(chat_key, ids, &self.pk_hex())?;
+        let eu = self.pk_hex();
+        let moderador = match ChatKey::parse(chat_key) {
+            Some(ChatKey::Channel { lid, .. }) => self.group(&lid).is_some_and(|g| g.meta.can(&eu, "del")),
+            _ => false,
+        };
+        self.apply_delete(chat_key, ids, &eu, moderador)?;
         self.send_app(chat_key, &AppMessage::Delete { ids: ids.to_vec() }, BuildOpts { no_ttl: true, ..Default::default() })
             .await?;
         Ok(())
@@ -2021,6 +2682,7 @@ impl Engine {
             p: Some(me.pic.clone().unwrap_or_default()),
             r: self.settings().relays.iter().take(5).cloned().collect(),
             g: Some(me.games.clone()),
+            st: me.status.as_ref().and_then(|x| x.clean(now_ms())),
         };
         let chat = ChatKey::Direct { peer: pk.to_string() }.as_string();
         self.send_app(&chat, &app, BuildOpts { no_self_copy: true, no_ttl: true, ..Default::default() }).await?;
@@ -2094,6 +2756,30 @@ impl Engine {
             }
         });
         Ok(())
+    }
+
+    /// Status personalizado (`None` tira). Vai para os contatos aceitos.
+    pub async fn set_my_status(self: &Arc<Self>, st: Option<crate::messages::CustomStatus>) -> Result<()> {
+        {
+            let mut me = self.me.write().unwrap();
+            me.status = st.and_then(|x| x.clean(now_ms()));
+            self.store.lock().unwrap().set_kv("me", &*me)?;
+        }
+        let _ = self.events.send(EngineEvent::ProfileChanged);
+        let contatos: Vec<String> = self.contacts().into_iter().filter(|c| c.status == ContactStatus::Ok).map(|c| c.pk).collect();
+        let me = Arc::clone(self);
+        tokio::spawn(async move {
+            for pk in contatos {
+                let _ = me.send_profile(&pk).await;
+            }
+            me.set_presence(false, true).await;
+        });
+        Ok(())
+    }
+
+    /// Status de um contato, se ainda valer.
+    pub fn status_of(&self, pk: &str) -> Option<crate::messages::CustomStatus> {
+        self.contact(pk)?.cstatus?.clean(now_ms())
     }
 
     /// Banner e jogos favoritos. `banner` vazio tira o banner. Os contatos
@@ -2189,13 +2875,16 @@ impl Engine {
     /// Manda foto, áudio ou som próprio. O cabeçalho sai na hora; os blocos
     /// seguem em segundo plano, avisando o progresso.
     pub async fn send_media(self: &Arc<Self>, chat_key: &str, bytes: Vec<u8>, meta: MediaMeta) -> Result<Message> {
-        if bytes.len() > media::MAX_MEDIA {
-            return Err(erro("Arquivo grande demais"));
+        let kind = meta.kind.ok_or_else(|| erro("tipo de mídia não informado"))?;
+        if bytes.len() > media::max_size(kind) {
+            return Err(erro(if kind == MediaKind::File { "Arquivo grande demais (até 5 MB)" } else { "Arquivo grande demais" }));
         }
-        if !media::mime_ok(&meta.mime) {
+        let tipo_ok = if kind == MediaKind::File { media::file_mime_ok(&meta.mime) } else { media::mime_ok(&meta.mime) };
+        if !tipo_ok {
             return Err(erro("Formato não suportado"));
         }
-        let kind = meta.kind.ok_or_else(|| erro("tipo de mídia não informado"))?;
+        let nome = (kind == MediaKind::File).then(|| media::clean_file_name(meta.name.as_deref().unwrap_or("arquivo")));
+        let vo = meta.view_once && kind != MediaKind::File && meta.sb.is_none();
         self.check_group_joined(chat_key)?;
         self.ensure_dm_contact(chat_key).await?;
 
@@ -2217,10 +2906,13 @@ impl Engine {
             wf: meta.wf.as_ref().map(|v| v.iter().take(48).map(|x| i64::from(*x)).collect()),
             w: meta.w.filter(|_| meta.h.is_some()),
             h: meta.h.filter(|_| meta.w.is_some()),
-            th: meta.th.clone().filter(|t| t.len() < media::THUMB_MAX),
+            th: meta.th.clone().filter(|t| t.len() < media::THUMB_MAX && !vo),
             sb: sb.clone(),
+            name: nome.clone(),
+            vo: vo.then_some(1),
         };
-        let b = self.build(chat_key, KIND_APP, AppMessage::MediaHeader(head.clone()).to_json(), Vec::new(), BuildOpts::default())?;
+        let tags = if meta.fwd { vec![Tag::custom("fwd", ["1"])] } else { Vec::new() };
+        let b = self.build(chat_key, KIND_APP, AppMessage::MediaHeader(head.clone()).to_json(), tags, BuildOpts::default())?;
         self.store.lock().unwrap().put_media(&mid, &b.id, chat_key, &meta.mime, &bytes)?;
         let info = MediaInfo {
             mid: mid.clone(),
@@ -2238,8 +2930,14 @@ impl Engine {
             got: n,
             ready: true,
             err: false,
+            name: nome,
+            vo,
+            opened: false,
         };
         let msg = Message {
+            fwd: meta.fwd,
+            lp: None,
+            edited: None,
             id: b.id.clone(),
             chat: chat_key.into(),
             author: self.pk_hex(),
@@ -2295,6 +2993,9 @@ impl Engine {
         let added = self.add_msg(
             key,
             Message {
+                fwd: protocol::tag_value(r, "fwd").is_some(),
+                lp: None,
+                edited: None,
                 id: rid,
                 chat: key.into(),
                 author: from.into(),
@@ -2598,7 +3299,7 @@ impl Engine {
                 status_name(c.status), c.verified as i64,
                 serde_json::to_string(&c.relays).unwrap_or_else(|_| "[]".into()),
                 c.prof_sent as i64, c.added_at,
-                serde_json::json!({ "b": c.banner, "g": c.games }).to_string()
+                serde_json::json!({ "b": c.banner, "g": c.games, "st": c.cstatus }).to_string()
             ],
         ).map_err(crate::store::StoreError::from)?;
         Ok(())
@@ -2849,6 +3550,9 @@ impl Engine {
             pic_v: g.pic_v,
         };
         let msg = Message {
+            fwd: false,
+            lp: None,
+            edited: None,
             id: b.id.clone(),
             chat: chat.clone(),
             author: self.pk_hex(),
@@ -3454,6 +4158,9 @@ impl Engine {
 
 fn sys_msg(id: &str, chat: &str, who: &str, from_me: bool, ts: i64, sys: &str, v: i64) -> Message {
     Message {
+        fwd: false,
+        lp: None,
+        edited: None,
         id: id.into(),
         chat: chat.into(),
         author: who.into(),
@@ -3511,7 +4218,24 @@ fn to_stored(m: &Message) -> StoredMsg {
         author: m.author.clone(),
         kind: m.body.kind_name().into(),
         ts: m.ts,
-        body: m.body.to_json(),
+        body: {
+            let base = match (&m.body, m.edited) {
+                (MessageBody::Text(t), Some(ed)) => serde_json::json!({ "text": t, "ed": ed }).to_string(),
+                _ => m.body.to_json(),
+            };
+            if m.fwd || m.lp.is_some() {
+                let mut v: serde_json::Value = serde_json::from_str(&base).unwrap_or_else(|_| serde_json::json!({}));
+                if m.fwd {
+                    v["fwd"] = true.into();
+                }
+                if let Some(lp) = &m.lp {
+                    v["lp"] = serde_json::to_value(lp).unwrap_or_default();
+                }
+                v.to_string()
+            } else {
+                base
+            }
+        },
         status: m.status.map(|s| delivery_name(s).to_string()),
         exp: m.exp,
         reply: m.reply.clone(),
@@ -3520,7 +4244,21 @@ fn to_stored(m: &Message) -> StoredMsg {
 }
 
 fn from_stored(m: StoredMsg, eu: &str) -> Message {
+    let edited = if m.kind == "text" && m.body.contains("\"ed\"") {
+        serde_json::from_str::<serde_json::Value>(&m.body).ok().and_then(|v| v["ed"].as_i64())
+    } else {
+        None
+    };
+    let (fwd, lp) = if m.body.contains("\"fwd\"") || m.body.contains("\"lp\"") {
+        let v: serde_json::Value = serde_json::from_str(&m.body).unwrap_or_default();
+        (v["fwd"].as_bool().unwrap_or(false), serde_json::from_value::<crate::messages::LinkPreview>(v["lp"].clone()).ok())
+    } else {
+        (false, None)
+    };
     Message {
+        edited,
+        fwd,
+        lp,
         from_me: m.author == eu,
         body: MessageBody::from_stored(&m.kind, &m.body),
         status: m.status.as_deref().and_then(parse_delivery),
@@ -3597,6 +4335,7 @@ fn save_chat(store: &Store, c: &ChatRow) -> Result<()> {
 fn new_contact(pk: &str, status: ContactStatus) -> Contact {
     let tone = u8::from_str_radix(pk.get(..2).unwrap_or("0"), 16).unwrap_or(0) % 6;
     Contact {
+        cstatus: None,
         pk: pk.to_string(),
         name: String::new(),
         nick: String::new(),
@@ -3621,6 +4360,7 @@ fn load_contacts(store: &Store) -> Result<HashMap<String, Contact>> {
     let rows: Vec<Contact> = stmt
         .query_map([], |r| {
             Ok(Contact {
+                cstatus: None,
                 pk: r.get(0)?,
                 name: r.get(1)?,
                 nick: r.get(2)?,
@@ -3639,6 +4379,7 @@ fn load_contacts(store: &Store) -> Result<HashMap<String, Contact>> {
                 let extra: serde_json::Value = r.get::<_, String>(11).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default();
                 c.banner = extra["b"].as_str().map(str::to_string);
                 c.games = extra["g"].as_array().map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_string)).collect()).unwrap_or_default();
+                c.cstatus = serde_json::from_value(extra["st"].clone()).ok();
                 c
             })
         })
@@ -3768,6 +4509,9 @@ fn placeholder_ts() -> i64 {
 pub const LISTENING_HEARTBEAT_MS: i64 = 4 * 60_000;
 /// Sem aviso novo por este tempo, considera que parou.
 pub const LISTENING_TTL_MS: i64 = 9 * 60_000;
+/// Online/ausente: repetido a cada 4 min; sem aviso por 9 min, some.
+pub const PRESENCE_HEARTBEAT_MS: i64 = 4 * 60_000;
+pub const PRESENCE_TTL_MS: i64 = 9 * 60_000;
 
 fn listening_alive(l: &Listening, recebido: i64, agora: i64) -> bool {
     if agora - recebido > LISTENING_TTL_MS {

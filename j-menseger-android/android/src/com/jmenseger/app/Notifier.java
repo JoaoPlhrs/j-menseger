@@ -68,6 +68,20 @@ final class Notifier {
                     .setVisibility(Notification.VISIBILITY_PRIVATE)
                     .setPublicVersion(new Notification.Builder(c, CH_MSG).setSmallIcon(R.drawable.ic_stat).setContentTitle("J-Menseger").setContentText("Nova mensagem").build())
                     .setContentIntent(open(c, tag.hashCode(), "chat", o.optString("chat", null)));
+            String chat = o.optString("chat", null);
+            if (chat != null && o.optBoolean("reply", false)) {
+                Intent ri = new Intent(c, NotifActionReceiver.class).putExtra("chat", chat).putExtra("acao", "reply");
+                // MUTABLE: o Android precisa pôr o texto digitado dentro do pedido.
+                PendingIntent pr = PendingIntent.getBroadcast(c, ("r" + tag).hashCode(), ri,
+                        PendingIntent.FLAG_UPDATE_CURRENT | (Build.VERSION.SDK_INT >= 31 ? PendingIntent.FLAG_MUTABLE : 0));
+                android.app.RemoteInput in = new android.app.RemoteInput.Builder("r").setLabel("Responder…").build();
+                b.addAction(new Notification.Action.Builder(null, "Responder", pr).addRemoteInput(in).setAllowGeneratedReplies(true).build());
+            }
+            if (chat != null && o.optBoolean("read", false)) {
+                Intent li = new Intent(c, NotifActionReceiver.class).putExtra("chat", chat).putExtra("acao", "read");
+                PendingIntent pl = PendingIntent.getBroadcast(c, ("l" + tag).hashCode(), li, PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+                b.addAction(new Notification.Action.Builder(null, "Marcar como lida", pl).build());
+            }
             c.getSystemService(NotificationManager.class).notify(tag, 1, b.build());
         } catch (Exception ignored) {
         }

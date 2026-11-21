@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>J-Menseger — mensagens e chamadas cifradas</title>
-<meta name="description" content="Converse, ligue e junte a turma em grupos com salas de voz. Tudo cifrado de ponta a ponta, sem telefone e sem e-mail. Para Windows e Android.">
+<meta name="description" content="Converse, ligue e junte a turma em grupos com salas de voz. Tudo cifrado de ponta a ponta, sem telefone e sem e-mail. Para Windows, Mac, Linux e Android.">
 <meta name="theme-color" content="#000000">
 <meta name="color-scheme" content="dark">
 <link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
@@ -72,7 +72,7 @@
       <a class="botao" href="#baixar">Baixar grátis</a>
       <a class="botao fantasma" href="#privacidade">Como a privacidade funciona</a>
     </div>
-    <p class="plataformas">Windows 10 e 11 · Android 8 ou mais novo</p>
+    <p class="plataformas">Windows · Mac · Linux · Android</p>
   </div>
 
   <figure class="demo" aria-label="Exemplo de conversa">
@@ -176,26 +176,47 @@
     <p>Grátis. Versões de teste: mande o que der errado para quem te convidou.</p>
   </div>
   <div class="downloads">
-    <article class="dl dl-pc">
+    <article class="dl dl-pc" data-so="windows">
       <h3>Windows</h3>
-      <p class="versao">Versão 0.4.0 · 36&nbsp;MB · Windows 10 e 11</p>
-      <a class="botao roxo" href="downloads/J-Menseger-0.4.0-instalador.exe" download>Baixar para Windows</a>
+      <p class="versao">Versão 0.6.0 · 37&nbsp;MB · Windows 10 e 11</p>
+      <a class="botao roxo" href="downloads/J-Menseger-0.6.0-instalador.exe" download>Baixar para Windows</a>
       <ol class="passos">
         <li><span>Abra o arquivo baixado.</span></li>
         <li><span>Se aparecer “O Windows protegeu o computador”, toque em <b>Mais informações</b> e depois em <b>Executar assim mesmo</b>.</span></li>
         <li><span>Clique em <b>Instalar</b>. O J-Menseger abre sozinho no final.</span></li>
       </ol>
     </article>
-    <article class="dl dl-cel">
+    <article class="dl dl-cel" data-so="android">
       <h3>Android</h3>
-      <p class="versao">Versão 0.5.0 beta · 0,7&nbsp;MB · Android 8 ou mais novo</p>
-      <a class="botao" href="downloads/J-Menseger-0.5.0-beta.apk" download>Baixar para Android</a>
+      <p class="versao">Versão 0.7.0 beta · 0,7&nbsp;MB · Android 8 ou mais novo</p>
+      <a class="botao" href="downloads/J-Menseger-0.7.0-beta.apk" download>Baixar para Android</a>
       <ol class="passos">
         <li><span>Abra o arquivo baixado no celular.</span></li>
         <li><span>Se o Android pedir, permita instalar apps desta fonte.</span></li>
         <li><span>Crie sua conta ou toque em <b>Restaurar</b> com suas 12 palavras.</span></li>
       </ol>
-      <p class="aviso"><svg class="i sm" aria-hidden="true"><use href="#i-key"/></svg><span>Tinha a versão 0.4? Anote suas 12 palavras, desinstale a antiga e instale esta: ela não instala por cima.</span></p>
+    </article>
+    <article class="dl dl-linux" data-so="linux">
+      <h3>Linux</h3>
+      <p class="versao">Versão 0.6.0 · 16&nbsp;MB · Ubuntu 22.04, Debian 12, Fedora 36 ou mais novos (64 bits)</p>
+      <a class="botao amarelo" href="downloads/J-Menseger-0.6.0-linux-amd64.deb" download>Baixar .deb (Ubuntu, Debian, Mint)</a>
+      <a class="botao fantasma" href="downloads/J-Menseger-0.6.0-linux-x86_64.tar.gz" download>Baixar .tar.gz (outras distribuições)</a>
+      <ol class="passos">
+        <li><span><b>.deb:</b> abra o arquivo baixado e clique em <b>Instalar</b> (ou, no terminal, <code>sudo apt install ./J-Menseger-0.6.0-linux-amd64.deb</code>).</span></li>
+        <li><span><b>.tar.gz:</b> extraia e rode <code>./instalar.sh</code> na pasta. Instala só para você, sem <code>sudo</code>.</span></li>
+        <li><span>O J-Menseger aparece no menu de aplicativos.</span></li>
+      </ol>
+    </article>
+    <article class="dl dl-mac" data-so="mac">
+      <h3>Mac</h3>
+      <p class="versao">Versão 0.6.0 · 17&nbsp;MB · macOS 11 (Big Sur) ou mais novo</p>
+      <a class="botao branco" href="downloads/J-Menseger-0.6.0-macos-arm64.dmg" download>Baixar para Mac com Apple Silicon (M1 a M4)</a>
+      <a class="botao fantasma" href="downloads/J-Menseger-0.6.0-macos-x86_64.dmg" download>Baixar para Mac com Intel</a>
+      <ol class="passos">
+        <li><span>Não sabe qual? Menu Apple <b>→ Sobre este Mac</b>: se em “Chip” aparecer “Apple M…”, é Apple Silicon.</span></li>
+        <li><span>Abra o arquivo <b>.dmg</b> e arraste o J-Menseger para <b>Aplicativos</b>.</span></li>
+        <li><span>Na primeira vez o macOS avisa que não pôde verificar o app: vá em <b>Ajustes do Sistema → Privacidade e Segurança</b> e clique em <b>Abrir Mesmo Assim</b>.</span></li>
+      </ol>
     </article>
   </div>
 </section>

@@ -377,6 +377,9 @@ impl Capture {
                         // conexão não achar que a chamada caiu.
                         pcm.iter_mut().for_each(|s| *s = 0);
                     }
+                    // Som do PC (jogo, vídeo) quando a transmissão pede: vai
+                    // mesmo com o microfone no mudo.
+                    crate::sysaudio::mix_into(&mut pcm);
                     lv.store(
                         (crate::codec::level(&pcm) * 1000.0) as u32,
                         Ordering::Relaxed,

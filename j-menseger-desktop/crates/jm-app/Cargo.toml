@@ -28,6 +28,9 @@ chrono = { version = "0.4", default-features = false, features = ["clock", "std"
 rfd = { version = "0.15", default-features = false, features = ["xdg-portal", "tokio"] }
 # Notificações do sistema (Linux via D-Bus, Windows via WinRT).
 notify-rust = "4"
+# Conferir o arquivo baixado da atualização.
+sha2 = "0.10"
+hex = "0.4"
 # Busca de GIFs no Tenor e no Giphy (HTTPS com rustls, o mesmo do resto).
 ureq = { version = "2.12", default-features = false, features = ["tls"] }
 
@@ -36,6 +39,10 @@ ureq = { version = "2.12", default-features = false, features = ["tls"] }
 windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging", "Win32_System_Threading", "Win32_System_Registry", "Win32_UI_Shell", "Win32_System_Com", "Win32_Security"] }
 # Atalhos (.lnk) do instalador.
 mslnk = "0.1"
+# Notificação com campo de resposta (o mesmo pacote que o notify-rust usa).
+windows = { version = "0.62", features = ["Foundation", "Foundation_Collections", "Data_Xml_Dom", "UI_Notifications"] }
+# Ícone na bandeja (perto do relógio) para continuar ligado com a janela fechada.
+tray-icon = { version = "0.21", default-features = false }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 # Música tocando no Spotify (MPRIS, pelo D-Bus da sessão).

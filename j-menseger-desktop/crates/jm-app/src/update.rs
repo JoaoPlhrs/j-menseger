@@ -5,7 +5,7 @@ use crate::calls::CallState;
 use crate::platform;
 use crate::state::*;
 use crate::theme::{self as t, Look};
-use iced::widget::text_editor;
+use iced::widget::{image, text_editor};
 use iced::Task;
 use jm_core::engine::{CallsFrom, ContactStatus, Engine, EngineEvent, MediaMeta, MessageBody, NotifPreview};
 use jm_core::groups::{ChannelKind, GroupPatch};
@@ -101,6 +101,10 @@ impl Main {
 
     /// Manda uma foto ou GIF já preparado na conversa aberta.
     fn send_draft(&mut self, d: PhotoDraft) -> Task<Msg> {
+        self.send_draft_opt(d, false)
+    }
+
+    fn send_draft_opt(&mut self, d: PhotoDraft, view_once: bool) -> Task<Msg> {
         let Some(key) = self.open_key() else { return Task::none() };
         let e = self.eng();
         let meta = MediaMeta {
@@ -109,6 +113,7 @@ impl Main {
             w: Some(d.w),
             h: Some(d.h),
             th: Some(d.th.clone()),
+            view_once,
             ..Default::default()
         };
         done(async move { e.send_media(&key, d.bytes.to_vec(), meta).await.map(|_| ()).map_err(s) })
@@ -776,7 +781,7 @@ impl Main {
                     .chat
                     .as_ref()
                     .and_then(|c| c.messages.iter().find(|m| m.id == id))
-                    .is_some_and(|m| m.from_me && !matches!(m.body, MessageBody::Deleted | MessageBody::System { .. }));
+                    .is_some_and(|m| (m.from_me || self.can_moderate(&m.chat)) && !matches!(m.body, MessageBody::Deleted | MessageBody::System { .. }));
                 self.modal = Some(Modal::DeleteMsg { id, mine });
                 Task::none()
             }
@@ -1269,6 +1274,490 @@ impl Main {
                 let e = self.eng();
                 done(async move { e.edit_group(&lid, &[GroupPatch::MoveChannel { id, dir }]).await.map_err(s) })
             }
+            Msg::EditStart(id) => {
+                self.close_overlays();
+                self.modal = None;
+                let Some(c) = self.chat.as_mut() else { return Task::none() };
+                let Some(MessageBody::Text(t)) = c.messages.iter().find(|m| m.id == id && m.from_me).map(|m| m.body.clone()) else {
+                    return Task::none();
+                };
+                c.reply = None;
+                c.edit = Some(id);
+                c.editor = text_editor::Content::with_text(&t);
+                c.editor.perform(text_editor::Action::Move(text_editor::Motion::DocumentEnd));
+                iced::widget::operation::focus(EDITOR_ID)
+            }
+            Msg::EditCancel => {
+                if let Some(c) = self.chat.as_mut() {
+                    if c.edit.take().is_some() {
+                        c.editor = text_editor::Content::new();
+                    }
+                }
+                Task::none()
+            }
+            Msg::PinMsg(id, on) => {
+                self.close_overlays();
+                if matches!(self.modal, Some(Modal::Pins { .. })) {
+                    self.modal = None;
+                }
+                let Some(key) = self.chat.as_ref().map(|c| c.key.clone()) else { return Task::none() };
+                let e = self.eng();
+                toast_done(async move {
+                    e.pin_message(&key, &id, on).await.map(|_| if on { "Mensagem fixada".to_string() } else { "Mensagem desafixada".to_string() }).map_err(s)
+                })
+            }
+            Msg::OpenPins => {
+                self.close_overlays();
+                let Some(c) = &self.chat else { return Task::none() };
+                let list: Vec<jm_core::engine::Message> = c
+                    .pins
+                    .iter()
+                    .filter_map(|id| self.engine.message(id))
+                    .filter(|m| m.chat == c.key && !matches!(m.body, MessageBody::Deleted))
+                    .collect();
+                Task::done(Msg::PinsLoaded(list))
+            }
+            Msg::PinsLoaded(list) => {
+                self.modal = Some(Modal::Pins { list });
+                Task::none()
+            }
+            Msg::JumpTo(id) => {
+                self.modal = None;
+                self.close_overlays();
+                let Some(c) = &self.chat else { return Task::none() };
+                if c.messages.iter().any(|m| m.id == id) {
+                    self.flash = Some((id.clone(), Instant::now()));
+                    return self.scroll_to_msg(&id);
+                }
+                let e = self.eng();
+                let key = c.key.clone();
+                Task::perform(async move { (key.clone(), e.messages(&key, i64::MAX, 3000).unwrap_or_default()) }, move |(k, msgs)| {
+                    Msg::JumpLoaded(k, id.clone(), msgs)
+                })
+            }
+            Msg::JumpLoaded(key, id, msgs) => {
+                let Some(c) = self.chat.as_mut().filter(|c| c.key == key) else { return Task::none() };
+                if !msgs.iter().any(|m| m.id == id) {
+                    return self.toast_t("Essa mensagem não está mais neste computador");
+                }
+                c.more = msgs.len() >= 3000;
+                c.messages = msgs;
+                self.flash = Some((id.clone(), Instant::now()));
+                self.scroll_to_msg(&id)
+            }
+            Msg::OpenSearch => {
+                self.close_overlays();
+                let Some(c) = &self.chat else { return Task::none() };
+                let e = self.eng();
+                let key = c.key.clone();
+                Task::perform(async move { e.messages(&key, i64::MAX, 5000).unwrap_or_default() }, Msg::SearchLoaded)
+            }
+            Msg::SearchLoaded(all) => {
+                let all = all.into_iter().filter(|m| matches!(m.body, MessageBody::Text(_) | MessageBody::Poll { .. })).collect();
+                self.modal = Some(Modal::Search { all, query: String::new() });
+                iced::widget::operation::focus(crate::v_modal::SEARCH_ID)
+            }
+            Msg::SearchInput(v) => {
+                if let Some(Modal::Search { query, .. }) = &mut self.modal {
+                    *query = v.chars().take(80).collect();
+                }
+                Task::none()
+            }
+            Msg::OpenPoll => {
+                self.close_overlays();
+                self.modal = Some(Modal::NewPoll { q: String::new(), opts: vec![String::new(), String::new()], multi: false });
+                Task::none()
+            }
+            Msg::PollQ(v) => {
+                if let Some(Modal::NewPoll { q, .. }) = &mut self.modal {
+                    *q = v.chars().take(200).collect();
+                }
+                Task::none()
+            }
+            Msg::PollOpt(i, v) => {
+                if let Some(Modal::NewPoll { opts, .. }) = &mut self.modal {
+                    if let Some(o) = opts.get_mut(i) {
+                        *o = v.chars().take(80).collect();
+                    }
+                }
+                Task::none()
+            }
+            Msg::PollAddOpt => {
+                if let Some(Modal::NewPoll { opts, .. }) = &mut self.modal {
+                    if opts.len() < 10 {
+                        opts.push(String::new());
+                    }
+                }
+                Task::none()
+            }
+            Msg::PollDelOpt(i) => {
+                if let Some(Modal::NewPoll { opts, .. }) = &mut self.modal {
+                    if opts.len() > 2 && i < opts.len() {
+                        opts.remove(i);
+                    }
+                }
+                Task::none()
+            }
+            Msg::PollMulti(on) => {
+                if let Some(Modal::NewPoll { multi, .. }) = &mut self.modal {
+                    *multi = on;
+                }
+                Task::none()
+            }
+            Msg::PollSend => {
+                let Some(Modal::NewPoll { q, opts, multi }) = &self.modal else { return Task::none() };
+                let opcoes: Vec<String> = opts.iter().map(|o| o.trim().to_string()).filter(|o| !o.is_empty()).collect();
+                if q.trim().is_empty() || opcoes.len() < 2 {
+                    return self.toast_t("Escreva a pergunta e pelo menos duas opções.");
+                }
+                let (q, multi) = (q.trim().to_string(), *multi);
+                self.modal = None;
+                let Some(key) = self.chat.as_ref().map(|c| c.key.clone()) else { return Task::none() };
+                let e = self.eng();
+                Task::batch([done(async move { e.send_poll(&key, &q, &opcoes, multi).await.map(|_| ()).map_err(s) }), to_bottom()])
+            }
+            Msg::Vote(id, i) => {
+                let Some(c) = &self.chat else { return Task::none() };
+                let Some(MessageBody::Poll { multi, votes, .. }) = c.messages.iter().find(|m| m.id == id).map(|m| &m.body) else {
+                    return Task::none();
+                };
+                let atual = votes.get(&self.me_pk()).cloned().unwrap_or_default();
+                let novo: Vec<u8> = if *multi {
+                    if atual.contains(&i) {
+                        atual.into_iter().filter(|x| *x != i).collect()
+                    } else {
+                        let mut v = atual;
+                        v.push(i);
+                        v.sort();
+                        v
+                    }
+                } else if atual.contains(&i) {
+                    Vec::new()
+                } else {
+                    vec![i]
+                };
+                let key = c.key.clone();
+                let e = self.eng();
+                done(async move { e.vote(&key, &id, &novo).await.map_err(s) })
+            }
+            Msg::OpenVoters(id) => {
+                self.close_overlays();
+                self.modal = Some(Modal::Voters { id });
+                Task::none()
+            }
+            Msg::OpenRoles(lid) => {
+                self.close_overlays();
+                self.modal = Some(Modal::Roles { lid, form: None });
+                Task::none()
+            }
+            Msg::RoleForm(id) => {
+                if let Some(Modal::Roles { lid, form }) = &mut self.modal {
+                    let g = self.engine.group(lid);
+                    let r = id.as_ref().and_then(|id| g.as_ref().and_then(|g| g.meta.roles.iter().find(|r| &r.id == id).cloned()));
+                    let n = g.map(|g| g.meta.roles.len()).unwrap_or(0);
+                    *form = Some(match r {
+                        Some(r) => RoleForm { id: Some(r.id), name: r.n, c: r.c, p: r.p },
+                        None => RoleForm { id: None, name: String::new(), c: (n % 8) as u8, p: Vec::new() },
+                    });
+                    if id.is_none() && n >= jm_core::groups::MAX_ROLES {
+                        *form = None;
+                        return self.toast_t("No máximo 12 cargos por grupo");
+                    }
+                }
+                iced::widget::operation::focus(crate::v_modal::ROLE_NAME_ID)
+            }
+            Msg::RoleName(v) => {
+                if let Some(Modal::Roles { form: Some(f), .. }) = &mut self.modal {
+                    f.name = v.chars().take(24).collect();
+                }
+                Task::none()
+            }
+            Msg::RolePerm(perm, on) => {
+                if let Some(Modal::Roles { form: Some(f), .. }) = &mut self.modal {
+                    f.p.retain(|x| x != &perm);
+                    if on {
+                        f.p.push(perm);
+                    }
+                }
+                Task::none()
+            }
+            Msg::OpenEvent => {
+                self.close_overlays();
+                let amanha = chrono::Local::now() + chrono::Duration::days(1);
+                self.modal = Some(Modal::NewEvent { title: String::new(), date: amanha.format("%d/%m/%Y").to_string(), time: "20:00".into(), desc: String::new() });
+                Task::none()
+            }
+            Msg::EventField(k, v) => {
+                if let Some(Modal::NewEvent { title, date, time, desc }) = &mut self.modal {
+                    match k {
+                        0 => *title = v.chars().take(120).collect(),
+                        1 => *date = v.chars().take(10).collect(),
+                        2 => *time = v.chars().take(5).collect(),
+                        _ => *desc = v.chars().take(500).collect(),
+                    }
+                }
+                Task::none()
+            }
+            Msg::EventSend => {
+                let Some(Modal::NewEvent { title, date, time, desc }) = &self.modal else { return Task::none() };
+                let quando = chrono::NaiveDateTime::parse_from_str(&format!("{} {}", date.trim(), time.trim()), "%d/%m/%Y %H:%M")
+                    .ok()
+                    .and_then(|d| d.and_local_timezone(chrono::Local).single());
+                let Some(quando) = quando else { return self.toast_t("Data ou hora inválida. Use 23/11/2026 e 20:00.") };
+                if title.trim().is_empty() {
+                    return self.toast_t("Dê um nome ao evento.");
+                }
+                let (t2, d2, at) = (title.trim().to_string(), desc.trim().to_string(), quando.timestamp_millis());
+                self.modal = None;
+                let Some(key) = self.open_key() else { return Task::none() };
+                let e = self.eng();
+                Task::batch([done(async move { e.send_event(&key, &t2, at, &d2).await.map(|_| ()).map_err(s) }), to_bottom()])
+            }
+            Msg::Rsvp(id, r) => {
+                let Some(key) = self.open_key() else { return Task::none() };
+                let e = self.eng();
+                done(async move { e.rsvp(&key, &id, &r).await.map_err(s) })
+            }
+            Msg::RoleColor(c) => {
+                if let Some(Modal::Roles { form: Some(f), .. }) = &mut self.modal {
+                    f.c = c % 8;
+                }
+                Task::none()
+            }
+            Msg::RoleSave => {
+                let Some(Modal::Roles { lid, form }) = &mut self.modal else { return Task::none() };
+                let Some(f) = form.take() else { return Task::none() };
+                if f.name.trim().is_empty() {
+                    *form = Some(f);
+                    return Task::none();
+                }
+                let lid = lid.clone();
+                let patches = match f.id {
+                    Some(id) => vec![GroupPatch::EditRole { id, n: Some(f.name.trim().into()), c: Some(f.c), p: Some(f.p) }],
+                    None => {
+                        // Cargo novo com poderes: cria e, em seguida, liga os poderes.
+                        let antes: Vec<String> = self.engine.group(&lid).map(|g| g.meta.roles.iter().map(|r| r.id.clone()).collect()).unwrap_or_default();
+                        let e = self.eng();
+                        let (l2, n, c, p) = (lid.clone(), f.name.trim().to_string(), f.c, f.p);
+                        return done(async move {
+                            e.edit_group(&l2, &[GroupPatch::AddRole { n, c }]).await.map_err(s)?;
+                            if !p.is_empty() {
+                                if let Some(novo) = e.group(&l2).and_then(|g| g.meta.roles.iter().find(|r| !antes.contains(&r.id)).map(|r| r.id.clone())) {
+                                    e.edit_group(&l2, &[GroupPatch::EditRole { id: novo, n: None, c: None, p: Some(p) }]).await.map_err(s)?;
+                                }
+                            }
+                            Ok(())
+                        });
+                    }
+                };
+                let e = self.eng();
+                done(async move { e.edit_group(&lid, &patches).await.map_err(s) })
+            }
+            Msg::RoleDelete(id) => {
+                let Some(Modal::Roles { lid, form }) = &mut self.modal else { return Task::none() };
+                *form = None;
+                let lid = lid.clone();
+                let e = self.eng();
+                toast_done(async move { e.edit_group(&lid, &[GroupPatch::RemoveRole(id)]).await.map(|_| "Cargo apagado".to_string()).map_err(s) })
+            }
+            Msg::OpenMemberRoles(lid, pk) => {
+                self.close_overlays();
+                self.modal = Some(Modal::MemberRoles { lid, pk });
+                Task::none()
+            }
+            Msg::RoleToggle(lid, pk, id, on) => {
+                if on && self.group(&lid).is_some_and(|g| g.meta.roles_of(&pk).len() >= jm_core::groups::MAX_ROLES_POR_MEMBRO) {
+                    return self.toast_t("No máximo 4 cargos por pessoa");
+                }
+                let e = self.eng();
+                done(async move { e.edit_group(&lid, &[GroupPatch::MemberRole { pk, id, on }]).await.map_err(s) })
+            }
+            Msg::ShareAudio(on) => {
+                self.share_audio = on;
+                let _ = self.engine.set_ui_pref("share_audio", &on);
+                Task::none()
+            }
+            Msg::OpenPeerVolume(pk) => {
+                self.close_overlays();
+                let v = self.calls.peer_volume(&pk);
+                self.modal = Some(Modal::PeerVolume { pk, v });
+                Task::none()
+            }
+            Msg::PeerVolume(nv) => {
+                let Some(Modal::PeerVolume { pk, v }) = &mut self.modal else { return Task::none() };
+                *v = nv;
+                let (pk, c) = (pk.clone(), Arc::clone(&self.calls));
+                Task::perform(async move { c.set_peer_volume(&pk, nv).await }, |_| Msg::Noop)
+            }
+            Msg::OpenSetStatus => {
+                self.close_overlays();
+                let s = self.me.status.clone().filter(|x| x.clean(jm_core::engine::now_ms()).is_some()).unwrap_or_default();
+                self.modal = Some(Modal::SetStatus { e: s.e, t: s.t, dnd: s.dnd, dur: 0 });
+                Task::none()
+            }
+            Msg::StatusField(k, v) => {
+                if let Some(Modal::SetStatus { e, t, .. }) = &mut self.modal {
+                    match k {
+                        0 => *e = v.chars().take(8).collect(),
+                        1 => *t = v.chars().take(80).collect(),
+                        _ => {
+                            // Sugestão pronta: "emoji|texto".
+                            if let Some((a, b)) = v.split_once('|') {
+                                *e = a.into();
+                                *t = b.into();
+                            }
+                        }
+                    }
+                }
+                Task::none()
+            }
+            Msg::StatusDnd(on) => {
+                if let Some(Modal::SetStatus { dnd, .. }) = &mut self.modal {
+                    *dnd = on;
+                }
+                Task::none()
+            }
+            Msg::StatusDur(d) => {
+                if let Some(Modal::SetStatus { dur, .. }) = &mut self.modal {
+                    *dur = d;
+                }
+                Task::none()
+            }
+            Msg::StatusSave(limpar) => {
+                let Some(Modal::SetStatus { e, t, dnd, dur }) = self.modal.take() else { return Task::none() };
+                let agora = jm_core::engine::now_ms();
+                let x = match dur {
+                    1 => agora + 3_600_000,
+                    2 => agora + 4 * 3_600_000,
+                    3 => chrono::Local::now().date_naive().and_hms_opt(23, 59, 59).and_then(|d| d.and_local_timezone(chrono::Local).single()).map(|d| d.timestamp_millis()).unwrap_or(0),
+                    _ => 0,
+                };
+                let st = (!limpar).then_some(jm_core::messages::CustomStatus { e, t, dnd, x });
+                let e = self.eng();
+                toast_done(async move { e.set_my_status(st).await.map(|_| "Status atualizado".to_string()).map_err(s) })
+            }
+            Msg::RemoveDevice(dev) => {
+                let e = self.eng();
+                toast_done(async move { e.remove_device(&dev).await.map(|_| "Pedido enviado: o aparelho sai assim que ficar on-line".to_string()).map_err(s) })
+            }
+            Msg::MentionPick(nome) => {
+                let Some(c) = self.chat.as_mut() else { return Task::none() };
+                let t = c.editor.text();
+                let t = t.trim_end_matches('\n');
+                let Some(i) = t.rfind('@') else { return Task::none() };
+                let novo = format!("{}@{} ", &t[..i], nome);
+                c.editor = text_editor::Content::with_text(&novo);
+                c.editor.perform(text_editor::Action::Move(text_editor::Motion::DocumentEnd));
+                iced::widget::operation::focus(EDITOR_ID)
+            }
+            Msg::SendTextReady(key, texto, reply, lp) => {
+                let e = self.eng();
+                Task::batch([done(async move { e.send_text_full(&key, &texto, reply.as_deref(), false, lp).await.map(|_| ()).map_err(s) }), to_bottom()])
+            }
+            Msg::PickFile => {
+                self.close_overlays();
+                Task::perform(platform::pick_file(), Msg::FilePicked)
+            }
+            Msg::FilePicked(r) => match r {
+                Ok(Some((nome, mime, bytes))) => {
+                    let Some(key) = self.open_key() else { return Task::none() };
+                    let e = self.eng();
+                    let meta = MediaMeta { kind: Some(MediaKind::File), mime, name: Some(nome), ..Default::default() };
+                    Task::batch([done(async move { e.send_media(&key, bytes, meta).await.map(|_| ()).map_err(s) }), to_bottom()])
+                }
+                Ok(None) => Task::none(),
+                Err(e) => self.toast_t(&e),
+            },
+            Msg::SaveFile(mid, nome) => {
+                self.close_overlays();
+                let Some(bytes) = self.engine.media_bytes(&mid) else { return self.toast_t("O arquivo ainda não chegou inteiro.") };
+                toast_done(platform::save_file(bytes, nome))
+            }
+            Msg::OpenForward(id) => {
+                self.close_overlays();
+                self.modal = Some(Modal::Forward { id, query: String::new() });
+                Task::none()
+            }
+            Msg::ForwardQuery(q) => {
+                if let Some(Modal::Forward { query, .. }) = &mut self.modal {
+                    *query = q.chars().take(40).collect();
+                }
+                Task::none()
+            }
+            Msg::ForwardTo(to) => {
+                let Some(Modal::Forward { id, .. }) = self.modal.take() else { return Task::none() };
+                let e = self.eng();
+                let nome = self.chat_title(&to);
+                toast_done(async move { e.forward(&id, &to).await.map(|_| format!("Encaminhada para {nome}")).map_err(s) })
+            }
+            Msg::OpenViewOnce(id) => {
+                self.close_overlays();
+                let Some(key) = self.open_key() else { return Task::none() };
+                let e = self.eng();
+                let i2 = id.clone();
+                Task::perform(async move { e.open_view_once(&key, &i2).await.map_err(s) }, move |r| Msg::ViewOnceBytes(id.clone(), r))
+            }
+            Msg::ViewOnceBytes(id, r) => {
+                let bytes = match r {
+                    Ok(b) => b,
+                    Err(e) => return self.toast_t(&e),
+                };
+                let audio = self.chat.as_ref().and_then(|c| c.messages.iter().find(|m| m.id == id)).is_some_and(|m| matches!(&m.body, MessageBody::Media(x) if x.kind == MediaKind::Audio));
+                if audio {
+                    let mid = format!("vo:{id}");
+                    return Task::perform(
+                        async move {
+                            let pcm = tokio::task::spawn_blocking(move || jm_media::audiofile::decode(&bytes).map(|p| p.samples)).await;
+                            (mid, pcm)
+                        },
+                        |(mid, r)| match r {
+                            Ok(Ok(pcm)) => Msg::VoiceReady(mid, Arc::new(pcm)),
+                            _ => Msg::Toast("Não deu para tocar esse áudio.".into()),
+                        },
+                    );
+                }
+                self.modal = Some(Modal::ViewOnce { handle: image::Handle::from_bytes(bytes) });
+                Task::none()
+            }
+            Msg::SendPhotoOnce => {
+                let Some(Modal::PhotoPreview(d)) = self.modal.take() else { return Task::none() };
+                self.send_draft_opt(d, true)
+            }
+            Msg::BackupExport => {
+                let e = self.eng();
+                toast_done(async move {
+                    let dados = tokio::task::spawn_blocking(move || e.export_backup()).await.map_err(|e| e.to_string())?.map_err(s)?;
+                    platform::save_backup(dados).await
+                })
+            }
+            Msg::BackupImport => {
+                let e = self.eng();
+                toast_done(async move {
+                    let Some(f) = rfd::AsyncFileDialog::new()
+                        .set_title("Restaurar backup do J-Menseger")
+                        .add_filter("Backup do J-Menseger", &["jmbackup"])
+                        .pick_file()
+                        .await
+                    else {
+                        return Err(String::new());
+                    };
+                    let dados = tokio::fs::read(f.path()).await.map_err(|e| e.to_string())?;
+                    let r = e.import_backup(&dados).await.map_err(s)?;
+                    Ok(format!("Backup restaurado: {} mensagens, {} contatos e {} grupos novos", r.messages, r.contacts, r.groups))
+                })
+            }
+            Msg::TrayClose(on) => {
+                self.tray_close = on;
+                let _ = self.engine.set_ui_pref("tray", &on);
+                Task::none()
+            }
+            Msg::TrayAutostart(on) => match crate::tray::set_autostart(on) {
+                Ok(()) => {
+                    self.autostart = on;
+                    Task::none()
+                }
+                Err(e) => self.toast_t(&e),
+            },
             Msg::MemberMenu(lid, pk) => open_menu(CtxKind::Member(lid, pk)),
             Msg::SetAdmin(lid, pk, on) => {
                 self.menu = None;
@@ -1291,7 +1780,64 @@ impl Main {
             }
 
             /* ---------------------------------------------- chamadas */
+            Msg::UpdateCheck => {
+                self.update_at = Instant::now();
+                self.update_msg = Some("Procurando…".into());
+                Task::perform(
+                    async { tokio::task::spawn_blocking(crate::atualizar::procurar).await.map_err(|e| e.to_string()).and_then(|r| r) },
+                    Msg::UpdateFound,
+                )
+            }
+            Msg::UpdateFound(r) => {
+                match r {
+                    Ok(Some(p)) => {
+                        self.update_msg = None;
+                        self.update = Some(p);
+                    }
+                    Ok(None) => self.update_msg = Some(format!("Você está na versão mais nova ({}).", crate::atualizar::VERSAO)),
+                    Err(e) => self.update_msg = Some(e),
+                }
+                Task::none()
+            }
+            Msg::UpdateStart => {
+                let Some(p) = self.update.clone() else { return Task::none() };
+                if self.update_prog.is_some() {
+                    return Task::none();
+                }
+                let prog = Arc::new(std::sync::atomic::AtomicU64::new(0));
+                self.update_prog = Some(Arc::clone(&prog));
+                Task::perform(
+                    async move { tokio::task::spawn_blocking(move || crate::atualizar::baixar(&p, prog)).await.map_err(|e| e.to_string()).and_then(|r| r) },
+                    Msg::UpdateDownloaded,
+                )
+            }
+            Msg::UpdateDownloaded(r) => {
+                self.update_prog = None;
+                match r.and_then(|caminho| crate::atualizar::instalar(&caminho)) {
+                    // O instalador troca o programa e o abre de novo.
+                    Ok(()) => iced::exit(),
+                    Err(e) => {
+                        self.toast(e.clone());
+                        self.update_msg = Some(e);
+                        Task::none()
+                    }
+                }
+            }
+            Msg::ToggleCamera => {
+                self.camera_wanted = false;
+                let c = Arc::clone(&self.calls);
+                Task::perform(async move { c.toggle_camera().await }, Msg::CameraToggled)
+            }
+            Msg::CameraToggled(r) => {
+                match r {
+                    Ok(false) => self.local_preview = None,
+                    Ok(true) => {}
+                    Err(e) => self.toast(e),
+                }
+                self.after_media_change()
+            }
             Msg::Call(pk, video) => {
+                self.camera_wanted = video;
                 self.close_overlays();
                 if self.room.is_some() {
                     self.toast("Saia da sala de voz para ligar.");
@@ -1309,6 +1855,7 @@ impl Main {
                 )
             }
             Msg::AcceptCall => {
+                self.camera_wanted = self.call.as_ref().is_some_and(|c| matches!(c.state, CallState::Ringing { video: true }));
                 let c = Arc::clone(&self.calls);
                 Task::perform(
                     async move {
@@ -1363,6 +1910,10 @@ impl Main {
                     self.joining_room = false;
                 }
                 self.room = info;
+                self.on_room_media()
+            }
+            Msg::RoomFrame(pk, v, h) => {
+                self.room_frames.insert(pk, (v, h));
                 Task::none()
             }
             Msg::FrameArrived(v, h) => {
@@ -1382,16 +1933,31 @@ impl Main {
                 let Some(Modal::Share { sources }) = self.modal.take() else { return Task::none() };
                 let Some(src) = sources.into_iter().find(|s| s.id == id) else { return Task::none() };
                 let (c, q) = (Arc::clone(&self.calls), self.share_quality);
-                done(async move { c.start_sharing(src, q, Fps::Fps30).await })
+                let audio = self.share_audio && jm_media::sysaudio::supported() && src.kind != jm_media::screen::SourceKind::Camera;
+                done(async move {
+                    c.start_sharing(src, q, Fps::Fps30).await?;
+                    if audio {
+                        if let Err(e) = jm_media::sysaudio::start() {
+                            tracing::warn!("áudio do PC: {e}");
+                            return Err(format!("A tela foi, mas o áudio do PC não: {e}"));
+                        }
+                    }
+                    Ok(())
+                })
             }
             Msg::StopSharing => {
                 let c = Arc::clone(&self.calls);
+                let sala = self.room.is_some();
                 Task::perform(
                     async move {
                         c.stop_sharing().await;
-                        c.info().await
+                        if sala {
+                            Msg::RoomUpdated(c.room_info().await)
+                        } else {
+                            Msg::CallUpdated(c.info().await)
+                        }
                     },
-                    Msg::CallUpdated,
+                    |m| m,
                 )
             }
             Msg::CallSound(id) => {
@@ -2164,6 +2730,8 @@ impl Main {
             editor: text_editor::Content::with_text(rascunho.trim_end_matches('\n')),
             reply: None,
             progress: HashMap::new(),
+            edit: None,
+            pins: self.engine.pins(&key),
         });
         let e = self.eng();
         let k = key.clone();
@@ -2187,6 +2755,14 @@ impl Main {
         let Some(c) = self.chat.as_mut() else { return Task::none() };
         let texto = c.editor.text();
         let texto = texto.trim().to_string();
+        if let Some(id) = c.edit.take() {
+            c.editor = text_editor::Content::new();
+            if texto.is_empty() {
+                return Task::none();
+            }
+            let key = c.key.clone();
+            return done(async move { e.edit_message(&key, &id, &texto).await.map_err(s) });
+        }
         if texto.is_empty() {
             return Task::none();
         }
@@ -2194,6 +2770,13 @@ impl Main {
         c.editor = text_editor::Content::new();
         let key = c.key.clone();
         self.drafts.remove(&key);
+        // Link no texto: primeiro a prévia (até ~6 s), depois a mensagem.
+        if let Some(url) = crate::linkprev::first_link(&texto).filter(|_| self.settings.link_previews) {
+            return Task::perform(
+                async move { tokio::task::spawn_blocking(move || crate::linkprev::fetch(&url)).await.ok().flatten() },
+                move |lp| Msg::SendTextReady(key.clone(), texto.clone(), reply.clone(), lp),
+            );
+        }
         Task::batch([done(async move { e.send_text_with(&key, &texto, reply.as_deref()).await.map(|_| ()).map_err(s) }), to_bottom()])
     }
 
@@ -2225,6 +2808,9 @@ impl Main {
         if k == Key::Escape {
             if self.call_full && self.menu.is_none() && self.popup.is_none() && self.modal.is_none() {
                 return Task::done(Msg::CallFull(false));
+            }
+            if self.menu.is_none() && self.popup.is_none() && self.modal.is_none() && self.chat.as_ref().is_some_and(|c| c.edit.is_some()) {
+                return Task::done(Msg::EditCancel);
             }
             if self.menu.is_some() || self.popup.is_some() {
                 self.close_overlays();
@@ -2415,6 +3001,8 @@ impl Main {
                 Toggle::Notifications => s.notifications = on,
                 Toggle::Sounds => s.sounds = on,
                 Toggle::LockScreenshots => s.lock_screenshots = on,
+                Toggle::Presence => s.presence = on,
+                Toggle::LinkPreviews => s.link_previews = on,
                 Toggle::ForceRelay => s.force_relay = on,
             })
             .await
@@ -2508,6 +3096,58 @@ impl Main {
         }
     }
 
+    /// Depois de ligar/desligar câmera ou tela: atualiza a sala ou a chamada.
+    fn after_media_change(&self) -> Task<Msg> {
+        let c = Arc::clone(&self.calls);
+        if self.room.is_some() {
+            Task::perform(async move { c.room_info().await }, Msg::RoomUpdated)
+        } else {
+            Task::perform(async move { c.info().await }, Msg::CallUpdated)
+        }
+    }
+
+    /// Sala de voz: busca as imagens novas de quem está mandando vídeo e a
+    /// prévia da sua câmera.
+    fn on_room_media(&mut self) -> Task<Msg> {
+        let Some(r) = &self.room else {
+            self.room_frames.clear();
+            if self.call.is_none() {
+                self.local_preview = None;
+            }
+            return Task::none();
+        };
+        let camera = r.sharing.as_deref().is_some_and(|s| s.starts_with("Câmera"));
+        if camera {
+            let desde = self.local_preview.as_ref().map(|(v, _)| *v).unwrap_or(0);
+            if let Some((v, w, h, px)) = self.calls.camera_preview(desde) {
+                self.local_preview = Some((v, image::Handle::from_rgba(w, h, px)));
+            }
+        } else {
+            self.local_preview = None;
+        }
+        let com_video: Vec<(String, u64)> = r.peers.iter().filter(|p| p.video).map(|p| (p.pk.clone(), p.frame_version)).collect();
+        self.room_frames.retain(|pk, _| com_video.iter().any(|(p, _)| p == pk));
+        let mut tarefas = Vec::new();
+        for (pk, versao) in com_video {
+            let visto = self.room_frames.get(&pk).map(|(v, _)| *v).unwrap_or(0);
+            if versao > visto {
+                let c = Arc::clone(&self.calls);
+                tarefas.push(Task::perform(
+                    async move {
+                        c.take_room_frame(&pk, visto)
+                            .await
+                            .map(|(v, img)| (pk, v, iced::widget::image::Handle::from_rgba(img.width, img.height, img.rgba)))
+                    },
+                    |r| match r {
+                        Some((pk, v, h)) => Msg::RoomFrame(pk, v, h),
+                        None => Msg::Noop,
+                    },
+                ));
+            }
+        }
+        Task::batch(tarefas)
+    }
+
     fn on_call_info(&mut self, info: Option<crate::calls::CallInfo>) -> Task<Msg> {
         let antes_tocando = self.call.as_ref().is_some_and(|c| matches!(c.state, CallState::Ringing { .. }));
         let chegou = info.as_ref().map(|i| i.frame_version).unwrap_or(0);
@@ -2528,7 +3168,22 @@ impl Main {
             }
         }
         self.call = info;
+        // Sua câmera: prévia pequena, e ligar sozinha na chamada de vídeo.
+        let camera_ligada = self.call.as_ref().is_some_and(|c| c.sharing.as_deref().is_some_and(|s| s.starts_with("Câmera")));
+        if camera_ligada {
+            let desde = self.local_preview.as_ref().map(|(v, _)| *v).unwrap_or(0);
+            if let Some((v, w, h, px)) = self.calls.camera_preview(desde) {
+                self.local_preview = Some((v, image::Handle::from_rgba(w, h, px)));
+            }
+        } else {
+            self.local_preview = None;
+        }
+        if self.camera_wanted && self.call.as_ref().is_some_and(|c| matches!(c.state, CallState::Active { .. })) {
+            self.camera_wanted = false;
+            return Task::done(Msg::ToggleCamera);
+        }
         if self.call.is_none() {
+            self.camera_wanted = false;
             self.remote_frame = None;
             if self.popup == Some(Popup::CallSounds) {
                 self.popup = None;
@@ -2609,6 +3264,83 @@ impl Main {
                 tarefas.push(self.anim_from_media(mid));
             }
         }
+        if self.update.is_none() && self.update_prog.is_none() && self.update_at.elapsed() >= Duration::from_secs(6 * 3600) {
+            self.update_at = Instant::now();
+            tarefas.push(Task::perform(
+                async { tokio::task::spawn_blocking(crate::atualizar::procurar).await.map_err(|e| e.to_string()).and_then(|r| r) },
+                |r| Msg::UpdateFound(r.map_err(|e| {
+                    tracing::info!("atualização: {e}");
+                    e
+                })),
+            ));
+        }
+        if crate::tray::SUPPORTED {
+            crate::tray::ensure();
+            for ev in crate::tray::poll() {
+                match ev {
+                    crate::tray::Ev::Show => {
+                        if let Some(id) = self.window {
+                            tarefas.push(iced::window::set_mode(id, iced::window::Mode::Windowed));
+                            tarefas.push(iced::window::gain_focus(id));
+                        }
+                    }
+                    crate::tray::Ev::Quit => tarefas.push(iced::exit()),
+                }
+            }
+        }
+        for a in crate::notif::poll() {
+            match a {
+                crate::notif::Action::Reply(chat, texto) => {
+                    let e = self.eng();
+                    let _ = self.engine.mark_read(&chat);
+                    tarefas.push(done(async move { e.send_text_with(&chat, &texto, None).await.map(|_| ()).map_err(s) }));
+                    tarefas.push(self.reload_chats());
+                }
+                crate::notif::Action::Read(chat) => {
+                    let _ = self.engine.mark_read(&chat);
+                    tarefas.push(self.reload_chats());
+                }
+                crate::notif::Action::Open(chat) => {
+                    if let Some(id) = self.window {
+                        tarefas.push(iced::window::set_mode(id, iced::window::Mode::Windowed));
+                        tarefas.push(iced::window::gain_focus(id));
+                    }
+                    tarefas.push(Task::done(Msg::OpenChat(chat)));
+                }
+            }
+        }
+        if self.evt_at.elapsed() >= Duration::from_secs(30) {
+            self.evt_at = Instant::now();
+            for (chat, titulo, at) in self.engine.due_event_reminders(15 * 60_000) {
+                let min = ((at - jm_core::engine::now_ms()) / 60_000).max(0);
+                let quando = if min <= 1 { "agora".to_string() } else { format!("em {min} minutos") };
+                crate::notif::message(format!("📅 {titulo}"), format!("Começa {quando}."), Some(chat), false);
+            }
+        }
+        if self.dev_at.is_none_or(|t| t.elapsed() >= Duration::from_secs(6 * 3600)) {
+            self.dev_at = Some(Instant::now());
+            let e = self.eng();
+            let (nome, sistema) = crate::platform::device_name();
+            tarefas.push(Task::perform(async move { e.announce_device(&nome, &sistema).await }, |_| Msg::Noop));
+        }
+        if self.sync_at.elapsed() >= Duration::from_secs(60) {
+            self.sync_at = Instant::now();
+            let e = self.eng();
+            tarefas.push(Task::perform(
+                async move {
+                    e.sync_request().await;
+                    e.sync_push(false).await;
+                },
+                |_| Msg::Noop,
+            ));
+        }
+        let ausente = !self.focused || self.lock.is_some();
+        if self.pres_sent.is_none_or(|(a, t)| a != ausente || t.elapsed() >= Duration::from_secs(60)) {
+            let forca = self.pres_sent.is_none_or(|(a, _)| a != ausente);
+            self.pres_sent = Some((ausente, Instant::now()));
+            let e = self.eng();
+            tarefas.push(Task::perform(async move { e.set_presence(ausente, forca).await }, |_| Msg::Noop));
+        }
         let vendo_perfil = self.section == Section::Settings && self.page == SettingsPage::Profile;
         if (self.listen_share || vendo_perfil) && !self.np_polling && self.np_at.elapsed() >= Duration::from_secs(5) {
             self.np_polling = true;
@@ -2640,6 +3372,23 @@ impl Main {
 
     fn on_engine(&mut self, ev: EngineEvent) -> Task<Msg> {
         match ev {
+            EngineEvent::Pins { chat } => {
+                if let Some(c) = self.chat.as_mut().filter(|c| c.key == chat) {
+                    c.pins = self.engine.pins(&chat);
+                }
+                Task::none()
+            }
+            EngineEvent::Presence { .. } => Task::none(),
+            EngineEvent::Devices => Task::none(),
+            EngineEvent::RemoteLogout => {
+                self.toast("Outro aparelho desta conta desconectou este computador.");
+                self.wipe()
+            }
+            EngineEvent::Synced { contacts, groups } => {
+                self.toast(format!("Seu outro aparelho mandou {contacts} contatos e {groups} grupos"));
+                self.reload_contacts();
+                Task::batch([self.reload_groups(), self.reload_chats()])
+            }
             EngineEvent::Message { chat, message } => {
                 if let Some(c) = self.chat.as_mut().filter(|c| c.key == chat) {
                     if !c.messages.iter().any(|x| x.id == message.id) {
@@ -2764,12 +3513,13 @@ impl Main {
 
     /// Mensagem de outra pessoa: som, toque do soundboard e notificação.
     fn on_incoming(&mut self, chat: &str, m: &jm_core::engine::Message, visible: bool) {
-        let silenciada = self.summary(chat).is_some_and(|c| c.muted)
+        let mencao = matches!(&m.body, MessageBody::Text(t) if self.mentions_me(chat, t, &m.author));
+        let silenciada = !mencao && self.summary(chat).is_some_and(|c| c.muted)
             || chat
                 .strip_prefix("g:")
                 .and_then(|r| r.split(':').next())
                 .and_then(|lid| self.group(lid))
-                .is_some_and(|g| g.muted);
+                .is_some_and(|g| g.muted && !mencao);
         // Som do soundboard chegando na conversa aberta: toca na hora, como no celular.
         if visible {
             match &m.body {
@@ -2786,6 +3536,10 @@ impl Main {
             return;
         }
         if silenciada || m.body.is_system() {
+            return;
+        }
+        // Não perturbe: nada de som nem aviso (as mensagens chegam normalmente).
+        if self.me.status.as_ref().and_then(|x| x.clean(jm_core::engine::now_ms())).is_some_and(|x| x.dnd) {
             return;
         }
         if self.settings.sounds {
@@ -2806,7 +3560,9 @@ impl Main {
                 NotifPreview::None => ("J-Menseger".to_string(), "Nova mensagem".to_string()),
                 _ => (quem, "Nova mensagem".to_string()),
             };
-            platform::notify(titulo, corpo);
+            // Com PIN ligado, nada de responder pela notificação (seria um atalho por cima do bloqueio).
+            let livre = self.pin.is_none();
+            crate::notif::message(titulo, corpo, livre.then(|| chat.to_string()), livre && self.can_write(chat));
         }
     }
 }
@@ -2823,6 +3579,23 @@ pub const PADRAO: &str = "Padrão do sistema";
 
 /// Leva a lista de mensagens para a mais nova. A lista é ancorada embaixo,
 /// então o deslocamento conta a partir do fim: zero é a última mensagem.
+impl Main {
+    fn toast_t(&mut self, s: &str) -> Task<Msg> {
+        self.toast(s);
+        Task::none()
+    }
+
+    /// Rola a lista até perto da mensagem (a altura de cada uma varia, então
+    /// é uma estimativa pela posição; o destaque mostra qual é).
+    fn scroll_to_msg(&self, id: &str) -> Task<Msg> {
+        let Some(c) = &self.chat else { return Task::none() };
+        let Some(i) = c.messages.iter().position(|m| m.id == id) else { return Task::none() };
+        let n = c.messages.len().max(2) - 1;
+        let y = 1.0 - (i as f32 / n as f32);
+        iced::widget::operation::snap_to(MESSAGES_ID, iced::widget::operation::RelativeOffset { x: 0.0, y: y.clamp(0.0, 1.0) })
+    }
+}
+
 fn to_bottom() -> Task<Msg> {
     iced::widget::operation::snap_to(MESSAGES_ID, iced::widget::operation::RelativeOffset::START)
 }

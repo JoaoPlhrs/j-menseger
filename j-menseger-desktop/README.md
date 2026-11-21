@@ -94,7 +94,7 @@ J_MENSEGER_DATA=/tmp/beto/jm.db J_MENSEGER_RELAYS=ws://127.0.0.1:7781 cargo run 
 ## Gerar o programa para Windows
 
 **Pronto para baixar:**
-[`packaging/windows/dist/J-Menseger-0.4.0-instalador.exe`](packaging/windows/dist/J-Menseger-0.4.0-instalador.exe).
+[`packaging/windows/dist/J-Menseger-0.6.0-instalador.exe`](packaging/windows/dist/J-Menseger-0.6.0-instalador.exe).
 
 É um arquivo só, e é o próprio programa. Com "instalador" no nome, ele abre
 o **instalador animado** (no estilo do Discord): janela sem bordas com luzes
@@ -135,7 +135,7 @@ export PKG_CONFIG_LIBDIR="$PWD/target/win-c/lib/pkgconfig"
 cargo build --release -p jm-app --target x86_64-pc-windows-gnu
 
 # O instalador é o mesmo programa, com "instalador" no nome.
-cp target/x86_64-pc-windows-gnu/release/j-menseger.exe J-Menseger-0.4.0-instalador.exe
+cp target/x86_64-pc-windows-gnu/release/j-menseger.exe J-Menseger-0.6.0-instalador.exe
 ```
 
 A busca de GIFs usa chaves do próprio aplicativo, embutidas ao compilar:
@@ -166,7 +166,34 @@ pelas mesmas bibliotecas usadas no Linux — não há código diferente na aplic
 você marcar a opção: sem as 12 palavras, uma conta apagada não volta. Na versão final do Windows não
 há console, então os registros vão para `jmenseger.log`, ao lado do banco.
 
-## Instalar no Linux
+## Linux e Mac (pacotes para distribuir)
+
+Os dois são compilados pelo GitHub Actions
+([`.github/workflows/pc.yml`](../.github/workflows/pc.yml)) a cada envio que
+mexe nesta pasta. Os arquivos prontos ficam em **Actions → PC (Linux e
+macOS) → execução → Artifacts**.
+
+- **Linux:** compila no Ubuntu 22.04 (glibc 2.35), então roda no Ubuntu
+  22.04+, Debian 12+, Fedora 36+, Mint 21+. O libvpx vai dentro do programa
+  (`JM_VPX_STATIC=1`). [`packaging/linux/empacotar.sh`](packaging/linux/empacotar.sh)
+  gera o `.deb` e o `.tar.gz` (com `instalar.sh`, sem `sudo`).
+- **Mac:** um `.dmg` para Apple Silicon (macos-15) e um para Intel
+  (macos-15-intel), macOS 11 ou mais novo.
+  [`packaging/macos/empacotar.sh`](packaging/macos/empacotar.sh) monta o `.app`
+  com as permissões de câmera, microfone e tela. Ele também confere que nada
+  depende do Homebrew e assina "ad hoc". Sem a conta paga da Apple não há
+  notarização: na primeira vez, **Ajustes do Sistema → Privacidade e
+  Segurança → Abrir Mesmo Assim**.
+
+Só no Windows por enquanto:
+- ícone na bandeja;
+- abrir ao ligar;
+- áudio do PC na transmissão;
+- atualização automática.
+
+No Linux e no Mac, fechar a janela encerra o app.
+
+### Instalar no Linux a partir do código
 
 ```bash
 cargo build --release -p jm-app

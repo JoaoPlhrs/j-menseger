@@ -1,0 +1,49 @@
+{
+  "windows": {
+    "versao": "0.6.0",
+    "url": "https://j-menseger-site.vercel.app/downloads/J-Menseger-0.6.0-instalador.exe",
+    "sha256": "0470858093217854446b0d4bd8b50f3e1ab6e61ed95bf2e4da4300e23c21b296",
+    "tamanho": 39081984,
+    "novidades": "Responder e marcar como lida pela notificação, enviar arquivos (até 5 MB), encaminhar, foto e áudio de visualização única, prévia de links, poderes por cargo, eventos do grupo com presença e lembrete, áudio do PC na transmissão (Windows), volume de cada pessoa, status personalizado com Não perturbe e lista de aparelhos conectados. Agora também para Linux e Mac."
+  },
+  "android": {
+    "versao": "0.7.0-beta",
+    "codigo": 7,
+    "url": "https://j-menseger-site.vercel.app/downloads/J-Menseger-0.7.0-beta.apk",
+    "sha256": "db6b94f7160da06ab9f8aa8e7dfdfe09553e8490c968912a82ca0d48d769f7e1",
+    "tamanho": 739609,
+    "novidades": "Responder e marcar como lida pela notificação, enviar arquivos (até 5 MB), encaminhar, foto e áudio de visualização única, prévia de links, poderes por cargo, eventos do grupo com presença e lembrete, áudio do PC na transmissão (Windows), volume de cada pessoa, status personalizado com Não perturbe e lista de aparelhos conectados. Agora também para Linux e Mac."
+  },
+  "linux": {
+    "versao": "0.6.0",
+    "arquivos": [
+      {
+        "url": "https://j-menseger-site.vercel.app/downloads/J-Menseger-0.6.0-linux-amd64.deb",
+        "sha256": "0f6327542a4cac4b861248e2e3c4109815c8dc48739b937d37208369c53d6a31",
+        "tamanho": 16771592
+      },
+      {
+        "url": "https://j-menseger-site.vercel.app/downloads/J-Menseger-0.6.0-linux-x86_64.tar.gz",
+        "sha256": "9749f147aa8a06dbf23fd3e1a6735bbb366759d9cea2cc7b3a48f89fb8e6a28d",
+        "tamanho": 21675524
+      }
+    ],
+    "novidades": "Responder e marcar como lida pela notificação, enviar arquivos (até 5 MB), encaminhar, foto e áudio de visualização única, prévia de links, poderes por cargo, eventos do grupo com presença e lembrete, áudio do PC na transmissão (Windows), volume de cada pessoa, status personalizado com Não perturbe e lista de aparelhos conectados. Agora também para Linux e Mac."
+  },
+  "mac": {
+    "versao": "0.6.0",
+    "arquivos": [
+      {
+        "url": "https://j-menseger-site.vercel.app/downloads/J-Menseger-0.6.0-macos-arm64.dmg",
+        "sha256": "f6cca9c42da6db8cda8d6dd3eb03394ec35d9ee08f7e4d51248c0b8f4c902f92",
+        "tamanho": 17248424
+      },
+      {
+        "url": "https://j-menseger-site.vercel.app/downloads/J-Menseger-0.6.0-macos-x86_64.dmg",
+        "sha256": "5c0aa7d7fb359024bddc679bce7ae9277284a6f831d9c6f7b3c6c423e97ca31e",
+        "tamanho": 18825959
+      }
+    ],
+    "novidades": "Responder e marcar como lida pela notificação, enviar arquivos (até 5 MB), encaminhar, foto e áudio de visualização única, prévia de links, poderes por cargo, eventos do grupo com presença e lembrete, áudio do PC na transmissão (Windows), volume de cada pessoa, status personalizado com Não perturbe e lista de aparelhos conectados. Agora também para Linux e Mac."
+  }
+}

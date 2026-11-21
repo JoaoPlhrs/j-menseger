@@ -26,6 +26,7 @@ pub fn sidebar(m: &Main) -> El<'_> {
         item(SettingsPage::Profile, Icon::User, "Perfil", false),
         item(SettingsPage::MyCode, Icon::Qr, "Meu código", false),
         item(SettingsPage::Recovery, Icon::Key, "Chave de recuperação", m.words_pending),
+        item(SettingsPage::Devices, Icon::Screen, "Aparelhos conectados", false),
         rotulo("Privacidade e avisos"),
         item(SettingsPage::Privacy, Icon::Shield, "Privacidade e segurança", false),
         item(SettingsPage::Notifications, Icon::Bell, "Notificações", false),
@@ -86,7 +87,39 @@ pub fn page(m: &Main) -> El<'_> {
         SettingsPage::About => about(m),
         SettingsPage::Audio => audio(m),
         SettingsPage::Gifs => gifs(m),
+        SettingsPage::Devices => devices(m),
     }
+}
+
+/* ------------------------------------------------------------ aparelhos */
+
+fn devices(m: &Main) -> El<'_> {
+    let (nome, sistema) = crate::platform::device_name();
+    let mut linhas: Vec<El<'_>> = vec![ui::setting(Some(Icon::Screen), &format!("{nome} (este computador)"), Some(sistema), Trail::None, None, false)];
+    let agora = jm_core::engine::now_ms();
+    for (id, n, p, last) in m.engine.devices() {
+        let dias = (agora - last) / 86_400_000;
+        let visto = if agora - last < 7 * 3_600_000 { "Ativo recentemente".to_string() } else if dias < 1 { "Visto hoje".into() } else { format!("Visto há {dias} dias") };
+        let icone = if p == "Android" || p == "iOS" { Icon::Phone } else { Icon::Screen };
+        linhas.push(ui::setting(
+            Some(icone),
+            &n,
+            Some(format!("{p} · {visto}")),
+            Trail::Custom(ui::danger_text(None, "Desconectar", Some(Msg::RemoveDevice(id.clone()))).into()),
+            None,
+            false,
+        ));
+    }
+    frame(
+        "Aparelhos conectados",
+        Some("Onde esta conta está aberta (os aparelhos se avisam pela própria conta, cifrado)."),
+        vec![
+            ui::vspace(8.0),
+            ui::group(linhas),
+            ui::vspace(6.0),
+            ui::note("Desconectar manda o aparelho sair e apagar a conta dele assim que ficar on-line. Se alguém roubou suas 12 palavras, isso não basta: crie uma conta nova e avise seus contatos."),
+        ],
+    )
 }
 
 /* ------------------------------------------------------------ perfil */
@@ -323,6 +356,10 @@ fn recovery(m: &Main) -> El<'_> {
         }
         None => corpo.push(ui::note("Esta conta foi restaurada pela chave secreta, sem palavras. Guarde a chave abaixo.")),
     }
+    corpo.push(ui::label("Usar em outro aparelho"));
+    corpo.push(ui::note(
+        "No celular ou em outro PC, escolha “Já tenho uma conta” e digite estas palavras. Com este aparelho aberto, o outro recebe seus contatos e grupos sozinho. As mensagens novas chegam nos dois; para levar o histórico antigo, use Armazenamento → Fazer backup.",
+    ));
     corpo.push(ui::label("Chave secreta (avançado)"));
     corpo.push(
         container(
@@ -412,6 +449,22 @@ fn privacy(m: &Main) -> El<'_> {
                     false,
                 ),
                 ui::setting(Some(Icon::Chat), "Mostrar quando estou digitando", None, Trail::Switch(s.typing, |v| Msg::Toggle(Toggle::Typing, v)), None, false),
+                ui::setting(
+                    Some(Icon::Share),
+                    "Prévia dos links que eu mando",
+                    Some("Seu computador abre o site para pegar título e imagem; quem recebe não acessa nada".into()),
+                    Trail::Switch(s.link_previews, |v| Msg::Toggle(Toggle::LinkPreviews, v)),
+                    None,
+                    false,
+                ),
+                ui::setting(
+                    Some(Icon::Eye),
+                    "Mostrar quando estou online",
+                    Some("Se desligar, você também não vê quem está online".into()),
+                    Trail::Switch(s.presence, |v| Msg::Toggle(Toggle::Presence, v)),
+                    None,
+                    false,
+                ),
                 ui::setting(
                     Some(Icon::Timer),
                     "Mensagens temporárias para novas conversas",
@@ -510,8 +563,34 @@ fn notifications(m: &Main) -> El<'_> {
                 ),
                 ui::setting(Some(Icon::Volume), "Sons no app", Some("Toque curto quando chega mensagem".into()), Trail::Switch(s.sounds, |v| Msg::Toggle(Toggle::Sounds, v)), None, false),
             ]),
+            if crate::tray::SUPPORTED {
+                ui::group(vec![
+                    ui::setting(
+                        Some(Icon::Minimize),
+                        "Continuar ligado ao fechar a janela",
+                        Some("Fica na bandeja, perto do relógio, recebendo mensagens e chamadas".into()),
+                        Trail::Switch(m.tray_close, Msg::TrayClose),
+                        None,
+                        false,
+                    ),
+                    ui::setting(
+                        Some(Icon::Refresh),
+                        "Abrir ao ligar o computador",
+                        Some("Começa escondido na bandeja".into()),
+                        Trail::Switch(m.autostart, Msg::TrayAutostart),
+                        None,
+                        false,
+                    ),
+                ])
+            } else {
+                ui::vspace(0.0)
+            },
             ui::vspace(6.0),
-            ui::note("O que aparece no texto da notificação se ajusta em Privacidade e segurança → Prévia nas notificações. No computador, o app precisa estar aberto (pode ficar minimizado) para receber."),
+            ui::note(if crate::tray::SUPPORTED {
+                "O que aparece no texto da notificação se ajusta em Privacidade e segurança → Prévia nas notificações. Com a janela fechada, o J-Menseger continua na bandeja e avisa do que chegar; para sair de vez, use o ícone da bandeja."
+            } else {
+                "O que aparece no texto da notificação se ajusta em Privacidade e segurança → Prévia nas notificações. No computador, o app precisa estar aberto (pode ficar minimizado) para receber."
+            }),
         ],
     )
 }
@@ -873,6 +952,25 @@ fn storage(m: &Main) -> El<'_> {
         "Armazenamento",
         None,
         vec![
+            ui::label("Backup"),
+            ui::group(vec![
+                ui::setting(
+                    Some(Icon::Download),
+                    "Fazer backup das conversas",
+                    Some("Arquivo cifrado com a chave da sua conta: só abre com as suas palavras de recuperação. Fotos e áudios não entram.".into()),
+                    Trail::None,
+                    Some(Msg::BackupExport),
+                    false,
+                ),
+                ui::setting(
+                    Some(Icon::Upload),
+                    "Restaurar backup",
+                    Some("Junta as mensagens, contatos e grupos do arquivo com os daqui. Nada é apagado.".into()),
+                    Trail::None,
+                    Some(Msg::BackupImport),
+                    false,
+                ),
+            ]),
             ui::vspace(8.0),
             ui::group(vec![
                 ui::setting(Some(Icon::Db), "Espaço usado pelo app", None, Trail::Custom(text(t::bytes_label(banco)).size(13.5).color(t::FG_DIM).into()), None, false),
@@ -904,7 +1002,6 @@ fn storage(m: &Main) -> El<'_> {
 /* ------------------------------------------------------------ sobre */
 
 fn about(m: &Main) -> El<'_> {
-    let _ = m;
     frame(
         "Sobre o J-Menseger",
         None,
@@ -922,6 +1019,13 @@ fn about(m: &Main) -> El<'_> {
             )
             .center_x(Length::Fill)
             .padding(10)
+            .into(),
+            row![
+                ui::secondary(Some(Icon::Refresh), "Procurar atualizações", Some(Msg::UpdateCheck)),
+                text(m.update.as_ref().map(|p| format!("Versão {} disponível: use o botão Atualizar na barra lateral.", p.versao)).or_else(|| m.update_msg.clone()).unwrap_or_default()).size(13).color(t::FG_DIM),
+            ]
+            .spacing(12)
+            .align_y(Alignment::Center)
             .into(),
             ui::label("Como sua privacidade é protegida"),
             column![

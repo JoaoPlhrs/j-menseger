@@ -625,7 +625,15 @@ fn barra_de_progresso<'a>(p: f32, c: f32) -> Element<'a, Msg> {
 
 /// Abre a janela do instalador (ou do desinstalador).
 pub fn run(mode: Mode, dados: PathBuf) -> iced::Result {
-    iced::application(move || (Setup::new(mode, dados.clone()), Task::none()), Setup::update, Setup::view)
+    iced::application(
+        move || {
+            // `--auto`: atualização pedida pelo próprio app, começa sozinha.
+            let auto = mode == Mode::Install && std::env::args().any(|a| a == "--auto");
+            (Setup::new(mode, dados.clone()), if auto { Task::done(Msg::Start) } else { Task::none() })
+        },
+        Setup::update,
+        Setup::view,
+    )
         .title(|s: &Setup| if s.mode == Mode::Install { format!("Instalar o {NOME}") } else { format!("Desinstalar o {NOME}") })
         .theme(|_: &Setup| Theme::Dark)
         .subscription(|_: &Setup| -> Subscription<Msg> { iced::window::frames().map(Msg::Frame) })

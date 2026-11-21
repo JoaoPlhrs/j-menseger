@@ -21,6 +21,8 @@ import java.util.List;
 /** A tela: mostra a WebView do App e faz a ponte com o sistema. */
 public class MainActivity extends Activity {
     static MainActivity current;
+    /** A tela está aberta na frente agora? */
+    static volatile boolean resumed;
     private static final int REQ_FILE = 11;
     private static final int REQ_PERM = 12;
     private static final int REQ_NOTIF = 13;
@@ -79,6 +81,7 @@ public class MainActivity extends Activity {
     protected void onResume() {
         super.onResume();
         current = this;
+        resumed = true;
         App.get().rebase(this);
         App.get().runJs("window.JM&&JM.onVisibility(true)");
     }
@@ -86,6 +89,7 @@ public class MainActivity extends Activity {
     @Override
     protected void onPause() {
         super.onPause();
+        resumed = false;
         App.get().runJs("window.JM&&JM.onVisibility(false)");
     }
 
@@ -140,6 +144,10 @@ public class MainActivity extends Activity {
 
     @Override
     protected void onActivityResult(int req, int res, Intent data) {
+        if (req == ScreenShare.REQ) {
+            ScreenShare.onResult(this, res, data);
+            return;
+        }
         if (req == REQ_FILE) {
             ValueCallback<Uri[]> cb = fileCallback;
             fileCallback = null;

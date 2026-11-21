@@ -10,19 +10,23 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod app;
+mod atualizar;
 mod bridge;
 mod calls;
 mod canvas;
 mod canvas_setup;
 mod gifs;
+mod linkprev;
 mod icons;
 mod motion;
+mod notif;
 mod nowplaying;
 mod platform;
 mod setup;
 mod sounds;
 mod state;
 mod theme;
+mod tray;
 mod ui;
 mod update;
 mod v_call;
@@ -72,6 +76,9 @@ fn main() -> iced::Result {
         size: Size::new(1180.0, 760.0),
         min_size: Some(Size::new(880.0, 560.0)),
         icon: icone(),
+        // No Windows, fechar manda para a bandeja (o app decide).
+        exit_on_close_request: !tray::SUPPORTED,
+        visible: !tray::started_hidden(),
         ..Default::default()
     })
     .run()

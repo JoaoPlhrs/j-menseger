@@ -147,3 +147,22 @@
     atualiza();
   }
 })();
+
+// Downloads: o cartão do sistema de quem está vendo vem primeiro e marcado.
+(() => {
+  const ua = navigator.userAgent, plat = (navigator.userAgentData && navigator.userAgentData.platform) || navigator.platform || "";
+  const so = /Android/i.test(ua) ? "android"
+    : /iPhone|iPad|iPod/i.test(ua) ? null
+    : /Win/i.test(plat) ? "windows"
+    : /Mac/i.test(plat) ? "mac"
+    : /Linux|X11/i.test(plat + ua) ? "linux" : null;
+  const lista = document.querySelector(".downloads");
+  const card = so && lista && lista.querySelector(`[data-so="${so}"]`);
+  if (!card) return;
+  card.classList.add("seu");
+  const tag = document.createElement("p");
+  tag.className = "seu-tag";
+  tag.textContent = "Para o seu aparelho";
+  card.prepend(tag);
+  lista.prepend(card);
+})();

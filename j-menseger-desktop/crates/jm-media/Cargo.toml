@@ -7,6 +7,8 @@ license.workspace = true
 description = "Áudio, vídeo e captura de tela do J-Menseger"
 
 [dependencies]
+# Câmera do computador (Media Foundation no Windows, V4L2 no Linux).
+nokhwa = { version = "0.10", default-features = false, features = ["input-native", "decoding"] }
 anyhow.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "sync", "time"] }
@@ -23,6 +25,11 @@ base64 = "0.22"
 # Importar áudio para o soundboard (MP3, M4A/AAC, WAV, FLAC, Ogg Vorbis).
 # Tudo em Rust: nada a mais para compilar no Windows.
 symphonia = { version = "0.5", default-features = false, features = ["mp3", "aac", "isomp4", "flac", "wav", "pcm", "vorbis", "ogg"] }
+
+[target.'cfg(windows)'.dependencies]
+# Áudio do PC na transmissão (WASAPI "process loopback", sem o próprio app).
+wasapi = "0.27"
+windows-version = "0.1"
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["full"] }

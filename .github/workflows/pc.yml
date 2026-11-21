@@ -1,0 +1,130 @@
+# J-Menseger para Linux e Mac. Cada um compila numa máquina do GitHub:
+#  - Linux no Ubuntu 22.04 (glibc 2.35), para rodar em distribuições de 2022
+#    para cá, e não só nas mais novas;
+#  - Mac num Mac (não dá para compilar para o macOS a partir do Linux).
+# Os arquivos prontos ficam em "Artifacts": Actions → PC (Linux e macOS) →
+# a execução mais recente → Artifacts. Rodando à mão com "publicar", os
+# pacotes também vão para j-menseger-site/downloads/ no próprio branch.
+name: PC (Linux e macOS)
+
+on:
+  workflow_dispatch:
+    inputs:
+      publicar:
+        description: 'Copiar os pacotes para j-menseger-site/downloads neste branch'
+        type: boolean
+        default: false
+  push:
+    branches: ['claude/**', 'main', 'master']
+    paths:
+      - 'j-menseger-desktop/**'
+      - '.github/workflows/pc.yml'
+
+jobs:
+  linux:
+    runs-on: ubuntu-22.04
+    defaults:
+      run:
+        working-directory: j-menseger-desktop
+    steps:
+      - uses: actions/checkout@v4
+      - name: Bibliotecas
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libvpx-dev libasound2-dev libgbm-dev libegl1-mesa-dev \
+            libxcb1-dev libx11-dev libx11-xcb-dev libxcb-render0-dev libxcb-shm0-dev libxcb-xkb-dev \
+            libxkbcommon-dev libxkbcommon-x11-dev libxrandr-dev libwayland-dev \
+            libdbus-1-dev libpipewire-0.3-dev libspa-0.2-dev clang cmake nasm
+          # A captura de tela no Wayland (xcap → pipewire 0.10) pede os
+          # cabeçalhos do PipeWire 1.0; o 22.04 tem os da 0.3.48. Só os
+          # cabeçalhos vêm do Ubuntu 24.04: o programa continua usando a
+          # biblioteca que o sistema de quem instala já tem.
+          base=http://archive.ubuntu.com/ubuntu/pool/main/p/pipewire
+          mkdir -p /tmp/pw && cd /tmp/pw
+          curl -fsSLO $base/libspa-0.2-dev_1.0.5-1_amd64.deb
+          curl -fsSLO $base/libpipewire-0.3-dev_1.0.5-1_amd64.deb
+          for d in *.deb; do dpkg-deb -x "$d" raiz; done
+          sudo cp -r raiz/usr/include/spa-0.2 raiz/usr/include/pipewire-0.3 /usr/include/
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: j-menseger-desktop
+      - name: Compilar
+        env:
+          JM_VPX_STATIC: '1'
+        run: cargo build --release -p jm-app
+      - name: Testes do núcleo
+        run: cargo test --release -p jm-core
+      - name: Conferir dependências
+        run: |
+          readelf -d target/release/j-menseger | grep NEEDED
+          if readelf -d target/release/j-menseger | grep -E 'vpx|opus|pipewire|dbus'; then
+            echo "Biblioteca que nem todo Linux tem ficou de fora do programa."; exit 1
+          fi
+      - name: Montar o .deb e o .tar.gz
+        run: packaging/linux/empacotar.sh target/release/j-menseger
+      - uses: actions/upload-artifact@v4
+        with:
+          name: J-Menseger-linux-x86_64
+          path: |
+            j-menseger-desktop/packaging/linux/dist/*.deb
+            j-menseger-desktop/packaging/linux/dist/*.tar.gz
+          if-no-files-found: error
+
+  mac:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15          # Apple Silicon (M1, M2, M3, M4)
+            arq: arm64
+          - runner: macos-15-intel    # Macs com Intel
+            arq: x86_64
+    runs-on: ${{ matrix.runner }}
+    defaults:
+      run:
+        working-directory: j-menseger-desktop
+    steps:
+      - uses: actions/checkout@v4
+      - name: Bibliotecas
+        run: brew install libvpx pkg-config
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: j-menseger-desktop
+      - name: Compilar
+        env:
+          JM_VPX_STATIC: '1'
+          MACOSX_DEPLOYMENT_TARGET: '11.0'
+        run: cargo build --release -p jm-app
+      - name: Testes do núcleo
+        run: cargo test --release -p jm-core
+      - name: Montar o .app e o .dmg
+        run: packaging/macos/empacotar.sh target/release/j-menseger ${{ matrix.arq }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: J-Menseger-macos-${{ matrix.arq }}
+          path: j-menseger-desktop/packaging/macos/dist/*.dmg
+          if-no-files-found: error
+
+  publicar:
+    if: github.event_name == 'workflow_dispatch' && inputs.publicar
+    needs: [linux, mac]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: pacotes
+          merge-multiple: true
+      - name: Colocar no site e enviar
+        run: |
+          ls -la pacotes
+          cp pacotes/*.deb pacotes/*.tar.gz pacotes/*.dmg j-menseger-site/downloads/
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add j-menseger-site/downloads
+          git commit -m "Site: pacotes de Linux e Mac compilados pelo GitHub Actions" || exit 0
+          git push

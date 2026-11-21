@@ -17,6 +17,17 @@ use std::collections::BTreeMap;
 pub fn view<'a>(m: &'a Main, c: &'a OpenChat) -> El<'a> {
     let lista = messages(m, c);
     let mut camadas: Vec<El<'a>> = vec![lista];
+    // Sugestões de @menção: por cima da lista, para não mexer no campo de
+    // texto (mudar a estrutura dele tira o foco no meio da digitação).
+    if let Some(sug) = mention_suggestions(m, c) {
+        camadas.push(
+            container(container(sug).padding([6, 8]).style(t::panel))
+                .align_bottom(Length::Fill)
+                .align_left(Length::Fill)
+                .padding(Padding { left: 14.0, bottom: 4.0, right: 14.0, ..Padding::ZERO })
+                .into(),
+        );
+    }
     if let Some(p) = &m.popup {
         let caixa: Option<El<'a>> = match p {
             Popup::Emoji => Some(emoji_popup()),
@@ -35,7 +46,31 @@ pub fn view<'a>(m: &'a Main, c: &'a OpenChat) -> El<'a> {
             );
         }
     }
-    column![header(m, c), stack(camadas).height(Length::Fill), composer(m, c)].into()
+    column![header(m, c), pin_bar(m, c), stack(camadas).height(Length::Fill), composer(m, c)].into()
+}
+
+/// Faixa com a mensagem fixada mais recente, embaixo do cabeçalho.
+fn pin_bar<'a>(m: &'a Main, c: &'a OpenChat) -> El<'a> {
+    let alvo = c.pins.iter().find_map(|id| {
+        c.messages.iter().find(|x| &x.id == id).cloned().or_else(|| m.engine.message(id)).filter(|x| x.chat == c.key && !matches!(x.body, MessageBody::Deleted))
+    });
+    let Some(msg) = alvo else { return Space::new().height(0).into() };
+    let n = c.pins.len();
+    let mut r = row![
+        icon(Icon::Pin, 15.0, t::accent()),
+        column![
+            text(if n > 1 { format!("Mensagem fixada · {n}") } else { "Mensagem fixada".into() }).size(12).font(SEMI).color(t::accent()),
+            text(ui::ellipsis(&snippet(m, &msg), 120)).size(13).color(t::FG_DIM)
+        ]
+        .spacing(1)
+        .width(Length::Fill),
+    ]
+    .spacing(10)
+    .align_y(Alignment::Center);
+    if n > 1 {
+        r = r.push(ui::ghost(None, "Ver todas", Some(Msg::OpenPins)));
+    }
+    button(r).padding([7, 16]).width(Length::Fill).style(t::row_item(false)).on_press(Msg::JumpTo(msg.id.clone())).into()
 }
 
 /* ------------------------------------------------------------ cabeçalho */
@@ -59,6 +94,27 @@ fn header<'a>(m: &'a Main, c: &'a OpenChat) -> El<'a> {
                             .spacing(5)
                             .align_y(Alignment::Center)
                             .into()
+                    }
+                    _ if m.engine.status_of(&peer).is_some_and(|s| !s.t.is_empty() || !s.e.is_empty() || s.dnd) => {
+                        let s = m.engine.status_of(&peer).unwrap_or_default();
+                        let txt = format!("{} {}", s.e, if s.t.is_empty() && s.dnd { "Não perturbe".to_string() } else { s.t.clone() }).trim().to_string();
+                        row![
+                            container(Space::new()).width(8).height(8).style(t::rounded(if s.dnd { t::DANGER } else if m.engine.presence_of(&peer).is_some() { t::accent() } else { t::FG_FAINT }, 4.0)),
+                            text(ui::ellipsis(&txt, 60)).size(12.5).color(t::FG_DIM)
+                        ]
+                        .spacing(6)
+                        .align_y(Alignment::Center)
+                        .into()
+                    }
+                    _ if m.engine.presence_of(&peer).is_some() => {
+                        let on = m.engine.presence_of(&peer) == Some("on");
+                        row![
+                            container(Space::new()).width(8).height(8).style(t::rounded(if on { t::accent() } else { t::WARN }, 4.0)),
+                            text(if on { "online" } else { "ausente" }).size(12.5).color(if on { t::accent() } else { t::FG_DIM })
+                        ]
+                        .spacing(6)
+                        .align_y(Alignment::Center)
+                        .into()
                     }
                     _ if ttl > 0 => row![icon(Icon::Timer, 13.0, t::FG_DIM), text(format!("Temporárias: {}", jm_core::engine::ttl_label(ttl))).size(12.5).color(t::FG_DIM)]
                         .spacing(4)
@@ -219,6 +275,13 @@ fn message_row<'a>(m: &'a Main, c: &'a OpenChat, msg: &'a CoreMessage, emenda: b
         row![coluna, ferramentas, ui::fill()].spacing(6).align_y(Alignment::Center).into()
     };
     let topo = if emenda { 2.0 } else { 8.0 };
+    let destaque = m.flash.as_ref().filter(|(id, t0)| id == &msg.id && t0.elapsed().as_secs_f32() < 2.6).map(|(_, t0)| 1.0 - t0.elapsed().as_secs_f32() / 2.6);
+    let mencao = !mine && matches!(&msg.body, MessageBody::Text(s) if m.mentions_me(&c.key, s, &msg.author));
+    let linha: El<'a> = match (destaque, mencao) {
+        (Some(a), _) => container(linha).padding([2, 6]).style(t::rounded(t::with_alpha(t::accent(), 0.22 * a), 8.0)).into(),
+        (None, true) => container(linha).padding([2, 6]).style(t::rounded(t::with_alpha(MENCAO, 0.09), 8.0)).into(),
+        _ => linha,
+    };
     mouse_area(container(linha).padding(Padding { top: topo, ..Padding::ZERO }).width(Length::Fill))
         .on_enter(Msg::Hover(Some(msg.id.clone())))
         .on_exit(Msg::Unhover(msg.id.clone()))
@@ -238,7 +301,11 @@ fn bubble<'a>(m: &'a Main, c: &'a OpenChat, msg: &'a CoreMessage, mostrar_nome: 
     let mine = msg.from_me;
     let mut dentro = column![].spacing(5);
     if mostrar_nome {
-        dentro = dentro.push(text(m.name_of(&msg.author)).size(13).font(SEMI).color(name_color(m.tone_of(&msg.author))));
+        let cor = role_color(m, &c.key, &msg.author).unwrap_or_else(|| name_color(m.tone_of(&msg.author)));
+        dentro = dentro.push(text(m.name_of(&msg.author)).size(13).font(SEMI).color(cor));
+    }
+    if msg.fwd {
+        dentro = dentro.push(row![icon(Icon::Share, 12.0, t::FG_DIM), text("Encaminhada").size(12).font(SEMI).color(t::FG_DIM)].spacing(5).align_y(Alignment::Center));
     }
     if let Some(r) = &msg.reply {
         dentro = dentro.push(quote(m, c, r, mine));
@@ -250,7 +317,9 @@ fn bubble<'a>(m: &'a Main, c: &'a OpenChat, msg: &'a CoreMessage, mostrar_nome: 
         }
     }
     let corpo: El<'a> = match &msg.body {
-        MessageBody::Text(s) => rich(s),
+        MessageBody::Text(s) => rich_m(m, &c.key, s),
+        MessageBody::Poll { q, o, multi, votes } => poll(m, msg, q, o, *multi, votes),
+        MessageBody::Event { title, at, desc, rsvp } => event_card(m, msg, title, *at, desc, rsvp),
         MessageBody::Deleted => row![icon(Icon::Ban, 14.0, t::FG_FAINT), text(if mine { "Você apagou esta mensagem" } else { "Mensagem apagada" }).size(14).color(t::FG_FAINT)]
             .spacing(6)
             .align_y(Alignment::Center)
@@ -260,7 +329,9 @@ fn bubble<'a>(m: &'a Main, c: &'a OpenChat, msg: &'a CoreMessage, mostrar_nome: 
             let (e, n) = info.map(|s| (s.emoji, s.name)).unwrap_or(("🔊".into(), "Som".into()));
             sound_tile(e, n, Msg::PlaySound(id.clone()))
         }
+        MessageBody::Media(x) if x.vo => view_once(msg, x),
         MessageBody::Media(x) => match (x.kind, &x.sb) {
+            (MediaKind::File, _) => file_tile(m, c, msg, x),
             (MediaKind::Image, _) => photo(m, c, msg, x),
             (MediaKind::Audio, Some(sb)) => {
                 if x.ready {
@@ -275,6 +346,9 @@ fn bubble<'a>(m: &'a Main, c: &'a OpenChat, msg: &'a CoreMessage, mostrar_nome: 
         MessageBody::System { .. } => Space::new().into(),
     };
     dentro = dentro.push(corpo);
+    if let Some(lp) = &msg.lp {
+        dentro = dentro.push(link_card(m, lp));
+    }
     // O balão acompanha o conteúdo; a hora fica no canto direito de baixo.
     let balao = column![dentro, footer(msg, false)].spacing(5).align_x(Alignment::End);
     container(balao).padding([8, 11]).max_width(540).style(t::bubble(mine)).into()
@@ -292,8 +366,185 @@ fn rich<'a>(s: &str) -> El<'a> {
     rich_text(spans).size(14.5).color(t::FG).on_link_click(Msg::OpenUrl).into()
 }
 
+/// Amarelo das menções a você.
+pub const MENCAO: Color = Color { r: 1.0, g: 0.835, b: 0.31, a: 1.0 };
+
+/// Cor do primeiro cargo da pessoa no grupo da conversa.
+pub fn role_color(m: &Main, key: &str, pk: &str) -> Option<Color> {
+    let lid = key.strip_prefix("g:")?.split(':').next()?;
+    let g = m.group(lid)?;
+    let r = g.meta.roles_of(pk).first().map(|r| r.c)?;
+    let (rr, gg, bb) = jm_core::groups::ROLE_CORES[(r % 8) as usize];
+    Some(Color::from_rgb8(rr, gg, bb))
+}
+
+/// Texto com links e com as menções (`@nome`, `@todos`) destacadas.
+fn rich_m<'a>(m: &Main, key: &str, s: &str) -> El<'a> {
+    let lid = key.strip_prefix("g:").and_then(|r| r.split(':').next());
+    let Some(g) = lid.and_then(|l| m.group(l)).filter(|_| s.contains('@')) else { return rich(s) };
+    let meus = m.my_names(&g.lid);
+    let mut nomes: Vec<String> = g.meta.members.iter().map(|pk| m.name_of(pk)).filter(|n| !n.is_empty()).collect();
+    nomes.push("todos".into());
+    nomes.sort_by_key(|n| std::cmp::Reverse(n.chars().count()));
+    // Corta o texto em pedaços: normal, link ou menção.
+    let mut partes: Vec<(String, u8)> = Vec::new();
+    for (pedaco, link) in ui::split_links(s) {
+        if link {
+            partes.push((pedaco, 1));
+            continue;
+        }
+        let mut resto = pedaco.as_str();
+        'fora: while let Some(i) = resto.find('@') {
+            let antes_ok = i == 0 || resto[..i].ends_with(|c: char| c.is_whitespace() || c == '(');
+            if antes_ok {
+                let depois = &resto[i + 1..];
+                for n in &nomes {
+                    if depois.len() >= n.len() && depois.is_char_boundary(n.len()) && depois[..n.len()].to_lowercase() == n.to_lowercase() {
+                        let fim_ok = depois[n.len()..].chars().next().is_none_or(|c| !c.is_alphanumeric());
+                        if fim_ok {
+                            if i > 0 {
+                                partes.push((resto[..i].to_string(), 0));
+                            }
+                            let eu = n == "todos" || meus.contains(&n.to_lowercase());
+                            partes.push((format!("@{}", &depois[..n.len()]), if eu { 3 } else { 2 }));
+                            resto = &depois[n.len()..];
+                            continue 'fora;
+                        }
+                    }
+                }
+            }
+            partes.push((resto[..=i].to_string(), 0));
+            resto = &resto[i + 1..];
+        }
+        if !resto.is_empty() {
+            partes.push((resto.to_string(), 0));
+        }
+    }
+    if !partes.iter().any(|(_, k)| *k >= 2) {
+        return rich(s);
+    }
+    let spans: Vec<iced::widget::text::Span<'a, String>> = partes
+        .into_iter()
+        .map(|(txt, k)| match k {
+            1 => span(txt.clone()).link(txt).underline(true).color(t::READ_BLUE),
+            2 => span(txt).color(t::accent()).font(SEMI).background(t::with_alpha(t::accent(), 0.16)),
+            3 => span(txt).color(MENCAO).font(SEMI).background(t::with_alpha(MENCAO, 0.16)),
+            _ => span(txt),
+        })
+        .collect();
+    rich_text(spans).size(14.5).color(t::FG).on_link_click(Msg::OpenUrl).into()
+}
+
+/// Evento: quando, descrição, quem vai e os botões de resposta.
+fn event_card<'a>(m: &'a Main, msg: &'a CoreMessage, title: &'a str, at: i64, desc: &'a str, rsvp: &'a BTreeMap<String, String>) -> El<'a> {
+    use chrono::TimeZone;
+    let quando = chrono::Local.timestamp_millis_opt(at).single();
+    const DIAS: [&str; 7] = ["seg", "ter", "qua", "qui", "sex", "sáb", "dom"];
+    let data = quando
+        .map(|d| {
+            use chrono::Datelike;
+            format!("{}, {} às {}", DIAS[d.weekday().num_days_from_monday() as usize], d.format("%d/%m"), d.format("%H:%M"))
+        })
+        .unwrap_or_default();
+    let falta = at - jm_core::engine::now_ms();
+    let quando_txt = if falta < -3 * 3_600_000 {
+        "Já aconteceu".to_string()
+    } else if falta < 0 {
+        "Acontecendo agora".to_string()
+    } else if falta < 3_600_000 {
+        format!("Em {} min", falta / 60_000 + 1)
+    } else if falta < 86_400_000 {
+        format!("Em {} h", falta / 3_600_000)
+    } else if falta < 2 * 86_400_000 {
+        "Amanhã".to_string()
+    } else {
+        format!("Em {} dias", falta / 86_400_000)
+    };
+    let conta = |r: &str| rsvp.values().filter(|x| x.as_str() == r).count();
+    let meu = rsvp.get(&m.me_pk()).cloned().unwrap_or_default();
+    let mut col = column![
+        row![
+            container(icon(Icon::Clock, 18.0, t::accent_ink())).center(34).style(t::rounded(t::accent(), 8.0)),
+            column![text(title.to_string()).size(15).font(BOLD).color(t::FG), text(format!("{data} · {quando_txt}")).size(12.5).color(t::accent())].spacing(1),
+        ]
+        .spacing(10)
+        .align_y(Alignment::Center),
+    ]
+    .spacing(8)
+    .width(320);
+    if !desc.is_empty() {
+        col = col.push(text(desc.to_string()).size(13.5).color(t::FG_DIM));
+    }
+    col = col.push(text(format!("{} vão · {} talvez · {} não vão", conta("y"), conta("m"), conta("n"))).size(12).color(t::FG_DIM));
+    let botao = |rotulo: &'static str, r: &'static str| -> El<'a> {
+        let sel = meu == r;
+        button(text(rotulo).size(13).font(SEMI).color(if sel { t::accent_ink() } else { t::FG }))
+            .padding([6, 12])
+            .style(if sel { t::call_btn(t::CallBtn::Accept) } else { t::call_btn(t::CallBtn::Normal) })
+            .on_press(Msg::Rsvp(msg.id.clone(), if sel { String::new() } else { r.to_string() }))
+            .into()
+    };
+    col = col.push(row![botao("Vou", "y"), botao("Talvez", "m"), botao("Não vou", "n")].spacing(6));
+    col.into()
+}
+
+/// Enquete: cada opção é um botão com a barra de votos por trás.
+fn poll<'a>(m: &'a Main, msg: &'a CoreMessage, q: &'a str, o: &'a [String], multi: bool, votes: &'a BTreeMap<String, Vec<u8>>) -> El<'a> {
+    let me = m.me_pk();
+    let total = votes.len();
+    let meus = votes.get(&me).cloned().unwrap_or_default();
+    let mut col = column![
+        row![icon(Icon::Checks, 16.0, t::accent()), text(q.to_string()).size(15).font(BOLD).color(t::FG)].spacing(6).align_y(Alignment::Center),
+        text(if multi { "Escolha uma ou mais opções" } else { "Escolha uma opção" }).size(12).color(t::FG_DIM),
+    ]
+    .spacing(6)
+    .width(320);
+    for (i, opcao) in o.iter().enumerate() {
+        let n = votes.values().filter(|v| v.contains(&(i as u8))).count();
+        let frac = if total > 0 { n as f32 / total as f32 } else { 0.0 };
+        let meu = meus.contains(&(i as u8));
+        let marca: El<'a> = if meu {
+            container(icon(Icon::Check, 12.0, t::accent_ink())).center(18).style(t::rounded(t::accent(), 9.0)).into()
+        } else {
+            container(Space::new()).width(18).height(18).style(move |_| iced::widget::container::Style {
+                border: iced::Border { color: t::with_alpha(t::FG, 0.35), width: 2.0, radius: 9.0.into() },
+                ..Default::default()
+            }).into()
+        };
+        let barra = container(Space::new())
+            .width(Length::FillPortion(((frac * 1000.0) as u16).max(1)))
+            .height(Length::Fill)
+            .style(t::rounded(t::with_alpha(t::accent(), if meu { 0.26 } else { 0.15 }), 8.0));
+        let fundo: El<'a> = if n > 0 {
+            row![barra, Space::new().width(Length::FillPortion((((1.0 - frac) * 1000.0) as u16).max(1)))].height(Length::Fill).into()
+        } else {
+            Space::new().into()
+        };
+        let frente = row![marca, text(opcao.clone()).size(14).color(t::FG).width(Length::Fill), text(n.to_string()).size(13).font(BOLD).color(t::FG_DIM)]
+            .spacing(8)
+            .align_y(Alignment::Center);
+        col = col.push(
+            button(container(stack![container(frente).padding([8, 10]).width(Length::Fill), fundo]).style(t::quote(false)))
+                .padding(0)
+                .width(Length::Fill)
+                .style(t::ghost)
+                .on_press(Msg::Vote(msg.id.clone(), i as u8)),
+        );
+    }
+    col = col.push(
+        button(text(format!("{total} {} · ver quem votou", if total == 1 { "voto" } else { "votos" })).size(12).color(t::FG_DIM))
+            .padding([2, 0])
+            .style(t::ghost)
+            .on_press(Msg::OpenVoters(msg.id.clone())),
+    );
+    col.into()
+}
+
 fn footer<'a>(msg: &'a CoreMessage, solto: bool) -> El<'a> {
     let mut r = row![].spacing(4).align_y(Alignment::Center);
+    if msg.edited.is_some() && matches!(msg.body, MessageBody::Text(_)) {
+        r = r.push(text("editada").size(11).color(if solto { t::FG_FAINT } else { t::with_alpha(t::FG, 0.5) }));
+    }
     if msg.exp.is_some() {
         r = r.push(icon(Icon::Timer, 12.0, t::FG_FAINT));
     }
@@ -370,6 +621,66 @@ fn fit(w: Option<u32>, h: Option<u32>, max_w: f32, max_h: f32) -> (f32, f32) {
     let (w, h) = (w.unwrap_or(4).max(1) as f32, h.unwrap_or(3).max(1) as f32);
     let k = (max_w / w).min(max_h / h).min(1.0).max(0.05);
     ((w * k).max(120.0).min(max_w), (h * k).max(90.0).min(max_h))
+}
+
+/// Cartão da prévia do link (título, descrição e miniatura vieram com a mensagem).
+fn link_card<'a>(m: &'a Main, lp: &'a jm_core::messages::LinkPreview) -> El<'a> {
+    let site = lp.u.split("://").nth(1).unwrap_or("").split('/').next().unwrap_or("").trim_start_matches("www.").to_string();
+    let mut col = column![
+        text(site).size(11.5).color(t::FG_DIM),
+        text(ui::ellipsis(&lp.t, 120)).size(14).font(SEMI).color(t::READ_BLUE),
+    ]
+    .spacing(2)
+    .width(Length::Fill);
+    if !lp.d.is_empty() {
+        col = col.push(text(ui::ellipsis(&lp.d, 180)).size(12.5).color(t::FG_DIM));
+    }
+    let mut r = row![container(Space::new()).width(3).height(Length::Fill).style(t::rounded(t::READ_BLUE, 2.0)), col].spacing(10).height(Length::Shrink);
+    if let Some(h) = lp.i.as_deref().and_then(|i| m.pic(Some(i))) {
+        r = r.push(image(h).width(72).height(72).content_fit(ContentFit::Cover).border_radius(6.0));
+    }
+    button(container(r).padding([8, 10]).max_width(420).style(t::quote(false))).padding(0).style(t::ghost).on_press(Msg::OpenUrl(lp.u.clone())).into()
+}
+
+/// Documento: ícone, nome, tamanho e baixar.
+fn file_tile<'a>(m: &'a Main, c: &'a OpenChat, msg: &'a CoreMessage, x: &'a jm_core::media::MediaInfo) -> El<'a> {
+    let nome = x.name.clone().unwrap_or_else(|| "arquivo".into());
+    let ext = nome.rsplit_once('.').map(|(_, e)| e.to_ascii_uppercase()).unwrap_or_else(|| "ARQ".into());
+    let selo = container(text(ui::ellipsis(&ext, 4)).size(11).font(BOLD).color(t::accent_ink())).center(42).style(t::rounded(t::accent(), 8.0));
+    let mut info = column![text(ui::ellipsis(&nome, 40)).size(14).font(SEMI).color(t::FG), text(t::bytes_label(x.size as i64)).size(12).color(t::FG_DIM)].spacing(2);
+    if !x.ready {
+        info = info.push(progress_line(m, c, msg, x));
+    }
+    let mut r = row![selo, info.width(Length::Fill)].spacing(10).align_y(Alignment::Center).width(300);
+    if x.ready {
+        r = r.push(ui::icon_button_sm(Icon::Download, "Salvar arquivo", Some(Msg::SaveFile(x.mid.clone(), nome.clone()))));
+    }
+    r.into()
+}
+
+/// Foto ou áudio de visualização única.
+fn view_once<'a>(msg: &'a CoreMessage, x: &'a jm_core::media::MediaInfo) -> El<'a> {
+    let foto = x.kind == MediaKind::Image;
+    let (txt, sub, acao) = if x.opened {
+        (if foto { "Foto aberta" } else { "Áudio ouvido" }, if msg.from_me { "Visualização única · já foi aberta" } else { "Visualização única" }, None)
+    } else if msg.from_me {
+        (if foto { "Foto" } else { "Áudio" }, "Visualização única · ainda não aberta", None)
+    } else if !x.ready {
+        (if foto { "Foto" } else { "Áudio" }, "Visualização única · chegando…", None)
+    } else {
+        (if foto { "Foto" } else { "Áudio" }, "Visualização única · toque para abrir", Some(Msg::OpenViewOnce(msg.id.clone())))
+    };
+    let circulo = container(text("1").size(13).font(BOLD).color(if x.opened { t::FG_DIM } else { t::accent() }))
+        .center(26)
+        .style(move |_| iced::widget::container::Style {
+            border: iced::Border { color: if x.opened { t::FG_FAINT } else { t::accent() }, width: 2.0, radius: 13.0.into() },
+            ..Default::default()
+        });
+    let corpo = row![circulo, column![text(txt).size(14).font(SEMI).color(t::FG), text(sub).size(12).color(t::FG_DIM)].spacing(1)].spacing(10).align_y(Alignment::Center);
+    match acao {
+        Some(a) => button(corpo).padding([4, 2]).style(t::ghost).on_press(a).into(),
+        None => corpo.into(),
+    }
 }
 
 fn photo<'a>(m: &'a Main, c: &'a OpenChat, msg: &'a CoreMessage, x: &'a jm_core::media::MediaInfo) -> El<'a> {
@@ -566,6 +877,26 @@ fn composer<'a>(m: &'a Main, c: &'a OpenChat) -> El<'a> {
     }
 
     let mut col = column![].spacing(6);
+    if c.edit.is_some() {
+        col = col.push(
+            container(
+                row![
+                    icon(Icon::Edit, 16.0, t::accent()),
+                    column![
+                        text("Editando mensagem").size(12.5).font(SEMI).color(t::accent()),
+                        text("Enter salva · Esc ou X cancela").size(12).color(t::FG_DIM)
+                    ]
+                    .spacing(1)
+                    .width(Length::Fill),
+                    ui::icon_button_sm(Icon::X, "Cancelar edição", Some(Msg::EditCancel)),
+                ]
+                .spacing(10)
+                .align_y(Alignment::Center),
+            )
+            .padding([6, 10])
+            .style(t::rounded(t::surface(), 10.0)),
+        );
+    }
     if let Some(rid) = &c.reply {
         let alvo = c.messages.iter().find(|x| &x.id == rid);
         let (quem, oque) = match alvo {
@@ -628,6 +959,47 @@ fn composer<'a>(m: &'a Main, c: &'a OpenChat) -> El<'a> {
         .align_y(Alignment::End),
     );
     container(col).padding(Padding { top: 6.0, bottom: 14.0, left: 12.0, right: 12.0 }).into()
+}
+
+/// Sugestões de quem mencionar quando a última palavra começa com `@`.
+fn mention_suggestions<'a>(m: &'a Main, c: &'a OpenChat) -> Option<El<'a>> {
+    let lid = c.key.strip_prefix("g:")?.split(':').next()?;
+    let g = m.group(lid)?;
+    let txt = c.editor.text();
+    let txt = txt.trim_end_matches('\n');
+    let i = txt.rfind('@')?;
+    if i > 0 && !txt[..i].ends_with(char::is_whitespace) {
+        return None;
+    }
+    let q = txt[i + 1..].to_lowercase();
+    if q.contains(char::is_whitespace) || q.chars().count() > 20 {
+        return None;
+    }
+    let me = m.me_pk();
+    let mut nomes: Vec<(Option<String>, String)> = g
+        .meta
+        .members
+        .iter()
+        .filter(|pk| **pk != me)
+        .map(|pk| (Some(pk.clone()), m.name_of(pk)))
+        .filter(|(_, n)| n.to_lowercase().contains(&q))
+        .take(6)
+        .collect();
+    if "todos".starts_with(&q) {
+        nomes.push((None, "todos".into()));
+    }
+    if nomes.is_empty() {
+        return None;
+    }
+    let mut r = row![].spacing(6).align_y(Alignment::Center);
+    for (pk, n) in nomes {
+        let avatar: El<'a> = match &pk {
+            Some(pk) => ui::avatar(&n, m.tone_of(pk), m.pic_of(pk), 20.0),
+            None => icon(Icon::Users, 16.0, t::FG_DIM),
+        };
+        r = r.push(button(row![avatar, text(n.clone()).size(13).font(SEMI).color(t::FG)].spacing(6).align_y(Alignment::Center)).padding([4, 10]).style(t::row_item(true)).on_press(Msg::MentionPick(n)));
+    }
+    Some(scrollable(r).direction(iced::widget::scrollable::Direction::Horizontal(iced::widget::scrollable::Scrollbar::new().width(0).scroller_width(0))).into())
 }
 
 fn bar<'a>(content: El<'a>) -> El<'a> {
@@ -789,7 +1161,10 @@ fn attach_popup<'a>() -> El<'a> {
         column![
             ui::menu_item(Icon::Image, "Foto do computador", Msg::PickPhoto, false),
             ui::menu_item(Icon::Image, "GIF", Msg::SetPopup(Some(Popup::Gif)), false),
+            ui::menu_item(Icon::Upload, "Arquivo (até 5 MB)", Msg::PickFile, false),
             ui::menu_item(Icon::Wave, "Som do soundboard", Msg::SetPopup(Some(Popup::Sounds)), false),
+            ui::menu_item(Icon::Checks, "Enquete", Msg::OpenPoll, false),
+            ui::menu_item(Icon::Clock, "Evento", Msg::OpenEvent, false),
         ]
         .spacing(2),
     )

@@ -9854,6 +9854,8 @@ zoo`.split(`
     ],
     Xs = 2e4,
     ci = 24e5,
+    JM_FILE_MAX = 5e6,
+    JM_FILE_MIME = /^[a-z0-9.+_-]{1,60}\/[a-z0-9.+_-]{1,60}$/i,
     Ld =
       /^(audio\/(webm|ogg|mp4|mpeg|aac)|image\/(webp|jpeg|png|gif))(;[a-z0-9=,. -]*)?$/i,
     Za = 86400,
@@ -9887,7 +9889,106 @@ zoo`.split(`
     }
     return e;
   }
-  function jmCleanListening(t) {
+  // Backup: HKDF-SHA256 da chave da conta + AES-256-GCM sobre o JSON em gzip.
+  // Mesmo formato do PC ("JMBK1" + sal 16 + nonce 12 + cifrado).
+  async function jmBackupKey(t, e) {
+    let a = await crypto.subtle.importKey("raw", t, "HKDF", !1, ["deriveKey"]);
+    return crypto.subtle.deriveKey({ name: "HKDF", hash: "SHA-256", salt: e, info: new TextEncoder().encode("jmenseger-backup-v1") }, a, { name: "AES-GCM", length: 256 }, !1, ["encrypt", "decrypt"]);
+  }
+  async function jmGz(t, e) {
+    let a = new Blob([t]).stream().pipeThrough(e ? new CompressionStream("gzip") : new DecompressionStream("gzip"));
+    return new Uint8Array(await new Response(a).arrayBuffer());
+  }
+  async function jmSeal(t, e) {
+    let a = await jmGz(new TextEncoder().encode(e), !0),
+      n = crypto.getRandomValues(new Uint8Array(16)),
+      s = crypto.getRandomValues(new Uint8Array(12)),
+      o = new Uint8Array(await crypto.subtle.encrypt({ name: "AES-GCM", iv: s }, await jmBackupKey(t, n), a)),
+      r = new Uint8Array(33 + o.length);
+    return r.set(new TextEncoder().encode("JMBK1")), r.set(n, 5), r.set(s, 21), r.set(o, 33), r;
+  }
+  async function jmOpen(t, e) {
+    if (e.length < 49 || new TextDecoder().decode(e.subarray(0, 5)) !== "JMBK1") throw new Error("Este arquivo n\xE3o \xE9 um backup do J-Menseger.");
+    let a;
+    try {
+      a = await crypto.subtle.decrypt({ name: "AES-GCM", iv: e.subarray(21, 33) }, await jmBackupKey(t, e.subarray(5, 21)), e.subarray(33));
+    } catch {
+      throw new Error("Este backup \xE9 de outra conta (ou o arquivo est\xE1 corrompido).");
+    }
+    try {
+      return new TextDecoder().decode(await jmGz(new Uint8Array(a), !1));
+    } catch {
+      throw new Error("Backup corrompido.");
+    }
+  }
+  function jmFileName(t) {
+    let e = String(t || "")
+      .split(/[\\/]/)
+      .pop()
+      .replace(/[\u0000-\u001f<>:"|?*]/g, "")
+      .slice(0, 120)
+      .trim()
+      .replace(/^\.+/, "");
+    return e || "arquivo";
+  }
+  function jmCleanLp(t) {
+    if (!t || typeof t != "object") return null;
+    let e = String(t.u || "").trim().slice(0, 600),
+      a = ie(t.t, 140);
+    if (!/^https?:\/\//.test(e) || !a) return null;
+    let n = { u: e, t: a };
+    return (
+      (t.d = ie(t.d, 240)) && (n.d = t.d),
+      typeof t.i == "string" && t.i.length <= 4e4 && /^data:image\/(webp|jpeg|png);base64,/.test(t.i) && (n.i = t.i),
+      n
+    );
+  }
+  function jmCleanLpJson(t) {
+    if (!t) return;
+    try {
+      return jmCleanLp(JSON.parse(t)) || void 0;
+    } catch {
+      return;
+    }
+  }
+  function jmCleanStatus(t) {
+    if (!t || typeof t != "object") return null;
+    let e = String(t.e || "").replace(/[\u0000-\u001f]/g, "").slice(0, 8),
+      a = ie(t.t, 80),
+      n = !!t.dnd,
+      s = Number(t.x) > 0 ? Number(t.x) : 0;
+    if ((!e && !a && !n) || (s && s <= Date.now())) return null;
+    let o = {};
+    return e && (o.e = e), a && (o.t = a), n && (o.dnd = !0), s && (o.x = s), o;
+  }
+  var JM_PRES_HEARTBEAT = 24e4, JM_PRES_TTL = 54e4;
+  /** Cargos do grupo: nome e cor, e quem tem cada um. Igual ao PC. */
+  var JM_PERMS = [["pin", "Fixar mensagens"], ["del", "Apagar mensagens de outros"], ["todos", "Mencionar @todos"]];
+  /** Admin, ou cargo com esse poder. */
+  function jmCan(t, e, a) {
+    if (t.owner === e || (t.admins || []).includes(e)) return !0;
+    let n = (t.mroles || {})[e] || [];
+    return (t.roles || []).some((s) => n.includes(s.id) && (s.p || []).includes(a));
+  }
+  function jmCleanRoles(t, e) {
+    let a = (Array.isArray(t.roles) ? t.roles : [])
+        .filter((s) => s && /^[a-z0-9]{1,12}$/.test(s.id))
+        .slice(0, 12)
+        .map((s) => {
+          let o = { id: s.id, n: ie(s.n, 24) || "Cargo", c: Number.isInteger(s.c) ? ((s.c % 8) + 8) % 8 : 0 },
+            r = [...new Set((Array.isArray(s.p) ? s.p : []).filter((i) => JM_PERMS.some(([c]) => c === i)))];
+          return r.length && (o.p = r), o;
+        }),
+      n = {};
+    if (t.mroles && typeof t.mroles == "object")
+      for (let [s, o] of Object.entries(t.mroles))
+        if (Re.test(s) && e.includes(s) && Array.isArray(o)) {
+          let r = o.filter((i) => a.some((c) => c.id === i)).slice(0, 4);
+          r.length && (n[s] = r);
+        }
+    return a.length ? { roles: a, mroles: n } : {};
+  }
+    function jmCleanListening(t) {
     if (!t || typeof t != "object") return null;
     let e = (a, n) => String(a ?? "").replace(/[\u0000-\u001f\u007f]/g, "").slice(0, n).trim(),
       a = e(t.s, 120);
@@ -9941,6 +10042,8 @@ zoo`.split(`
       vibrate: !0,
       lockScreenshots: !1,
       notifications: !0,
+      presence: !0,
+      linkPreviews: !0,
     },
     Bd = {
       amigos: { text: ["geral", "fotos"], voice: ["Sala de estar"] },
@@ -10013,9 +10116,10 @@ zoo`.split(`
         return n ? n.v : a;
       }
       async setKv(e, a) {
-        return this.db.put("kv", { k: e, v: a });
+        return e === "lock" && (this.hasPin = !!a), this.db.put("kv", { k: e, v: a });
       }
       async load() {
+        (this.hasPin = !!(await this.kv("lock", null))),
         (this.me = await this.kv("me", null)),
           (this.settings = { ...Td, ...(await this.kv("settings", {})) });
         let e = await this.secure.get("sk");
@@ -10301,6 +10405,12 @@ zoo`.split(`
         let n = e.pubkey,
           s = n === this.pk,
           o = s ? Wa(e, "p") : n;
+        if (s && o === this.pk && e.kind === jt) {
+          try {
+            await this.onSelfApp(JSON.parse(e.content));
+          } catch {}
+          return;
+        }
         if (!o || !Re.test(o) || o === this.pk) return;
         let r = this.contacts.get(o);
         if (r && r.status === "blocked") return;
@@ -10317,6 +10427,8 @@ zoo`.split(`
                 kind: "text",
                 text: ie(e.content, 6e3),
                 reply: this.replyRef(e),
+                fwd: Wa(e, "fwd") ? !0 : void 0,
+                lp: jmCleanLpJson(Wa(e, "lp")),
                 ts: e.created_at * 1e3,
                 exp: this.expOf(e),
                 status: s ? "sent" : void 0,
@@ -10350,6 +10462,7 @@ zoo`.split(`
                 Array.isArray(c.r) &&
                   (l.relays = c.r.map(ha).filter(Boolean).slice(0, 5)),
                   Array.isArray(c.g) && (l.games = jmCleanGames(c.g)),
+                  Array.isArray(c.g) && ((l.st = jmCleanStatus(c.st) || void 0), l.st || delete l.st),
                   await this.db.put("contacts", l),
                   this.emit("contact", l),
                   this.emit("chats");
@@ -10392,6 +10505,44 @@ zoo`.split(`
             case "del":
               Array.isArray(c.ids) &&
                 (await this.applyDelete(i, c.ids.slice(0, 100), n));
+              return;
+            case "edit":
+              await this.applyEdit(i, c.id, c.x, n, e.created_at);
+              return;
+            case "voo":
+              s || (await this.markVoOpened(i, c.id, !0));
+              return;
+            case "evt":
+              s || (await this.ensureContact(o, "request")), await this.addEvent(i, e, c, n, s);
+              return;
+            case "rsvp":
+              await this.applyRsvp(i, c.id, c.r, n);
+              return;
+            case "pin":
+              await this.applyPin(i, c.id, !!c.on, n);
+              return;
+            case "poll":
+              s || (await this.ensureContact(o, "request")),
+                await this.addPoll(i, e, c, n, s);
+              return;
+            case "vote":
+              await this.applyVote(i, c.id, c.v, n);
+              return;
+            case "pres":
+              if (s || !a.eph || !r || r.status !== "ok") return;
+              this.presence || (this.presence = new Map());
+              {
+                let l = this.presence.get(o),
+                  u = !l || Date.now() - l.at > JM_PRES_TTL;
+                u &&
+                  c.s !== "off" &&
+                  this.myPres &&
+                  this.myPres.s !== "off" &&
+                  this.sendApp(i, { t: "pres", s: this.myPres.s }, { ephemeral: !0, selfCopy: !1, noTtl: !0 }).catch(() => {});
+              }
+              this.presence.set(o, { s: c.s === "away" ? "away" : c.s === "off" ? "off" : c.s === "dnd" ? "dnd" : "on", at: Date.now() }),
+                this.emit("presence", o),
+                this.emit("contact", r);
               return;
             case "ttl": {
               let l = Math.max(0, Math.min(28 * Za, parseInt(c.v, 10) || 0)),
@@ -10495,6 +10646,8 @@ zoo`.split(`
               kind: "text",
               text: ie(e.content, 6e3),
               reply: this.replyRef(e),
+              fwd: Wa(e, "fwd") ? !0 : void 0,
+              lp: jmCleanLpJson(Wa(e, "lp")),
               ts: e.created_at * 1e3,
               exp: this.expOf(e),
               status: o ? "sent" : void 0,
@@ -10618,7 +10771,25 @@ zoo`.split(`
             l &&
               !u &&
               Array.isArray(d.ids) &&
-              (await this.applyDelete(l, d.ids.slice(0, 100), s));
+              (await this.applyDelete(l, d.ids.slice(0, 100), s, jmCan(a.meta, s, "del")));
+            return;
+          case "edit":
+            l && !u && (await this.applyEdit(l, d.id, d.x, s, e.created_at));
+            return;
+          case "pin":
+            l && !u && jmCan(a.meta, s, "pin") && (await this.applyPin(l, d.id, !!d.on, s));
+            return;
+          case "evt":
+            l && !u && (await this.addEvent(l, e, d, s, o));
+            return;
+          case "rsvp":
+            l && !u && (await this.applyRsvp(l, d.id, d.r, s));
+            return;
+          case "poll":
+            l && !u && (await this.addPoll(l, e, d, s, o));
+            return;
+          case "vote":
+            l && !u && (await this.applyVote(l, d.id, d.v, s));
             return;
           case "room":
             n.eph &&
@@ -10678,7 +10849,13 @@ zoo`.split(`
           case "text":
             return e.text;
           case "media":
-            return e.media && e.media.sb
+            return e.media && e.media.type === "file"
+              ? "Arquivo: " + (e.media.name || "")
+              : e.media && e.media.vo
+              ? e.media.type === "audio"
+                ? "\xC1udio de visualiza\xE7\xE3o \xFAnica"
+                : "Foto de visualiza\xE7\xE3o \xFAnica"
+              : e.media && e.media.sb
               ? "Som: " + e.media.sb.n
               : e.media && e.media.type === "audio"
                 ? "Mensagem de voz"
@@ -10687,6 +10864,10 @@ zoo`.split(`
                   : "Foto";
           case "sound":
             return "Som do soundboard";
+          case "poll":
+            return "Enquete: " + ((e.poll && e.poll.q) || "");
+          case "event":
+            return "Evento: " + ((e.evt && e.evt.ti) || "");
           case "invite":
             return (
               "Convite para " +
@@ -10743,11 +10924,11 @@ zoo`.split(`
             this.emit("msgUpdate", e, o);
         }
       }
-      async applyDelete(e, a, n) {
+      async applyDelete(e, a, n, jmMod = !1) {
         for (let s of a) {
           if (typeof s != "string" || !Re.test(s)) continue;
           let o = await this.db.get("msgs", s);
-          if (!o || o.chat !== e || o.from !== n) continue;
+          if (!o || o.chat !== e || (o.from !== n && !jmMod)) continue;
           o.media && (await this.db.del("media", o.media.mid));
           let r = {
             id: o.id,
@@ -10898,11 +11079,12 @@ zoo`.split(`
       async retry(e, a) {
         await this.flushOutbox();
       }
-      async sendText(e, a, { reply: n } = {}) {
+      async sendText(e, a, { reply: n, fwd: jf, lp: jl } = {}) {
         if (((a = String(a || "").trim()), !a)) return null;
         a = a.slice(0, 6e3);
-        let s = n ? [["e", n, "", "reply"]] : [],
-          o = this.build(e, Ys, a, s);
+        let s = n ? [["e", n, "", "reply"]] : [];
+        (jl = jmCleanLp(jl)), jf && s.push(["fwd", "1"]), jl && s.push(["lp", JSON.stringify(jl)]);
+        let o = this.build(e, Ys, a, s);
         return (
           await this.ensureDmContact(e),
           this.localSend(
@@ -10913,6 +11095,8 @@ zoo`.split(`
               kind: "text",
               text: a,
               reply: n,
+              fwd: jf ? !0 : void 0,
+              lp: jl || void 0,
               ts: o.rumor.created_at * 1e3,
             },
             o,
@@ -10967,8 +11151,407 @@ zoo`.split(`
         );
         await this.publish(o.rumor.id, o.wraps, o.relays);
       }
+      /** Edição de texto: só quem escreveu edita, e só mensagens de texto. */
+      async applyEdit(e, a, n, s, o) {
+        if (typeof a != "string" || !Re.test(a)) return;
+        let r = ie(n, 6e3);
+        if (!r) return;
+        let i = await this.db.get("msgs", a);
+        if (!i || i.chat !== e || i.from !== s || i.kind !== "text") return;
+        let c = (o || be()) * 1e3;
+        if (i.edited && i.edited > c) return;
+        (i.text = r), (i.edited = c), await this.db.put("msgs", i);
+        let l = this.chats.get(e);
+        l && l.lastId === a && ((l.lastText = r), await this.saveChat(l)),
+          this.emit("msgUpdate", e, i);
+      }
+      async editMsg(e, a, n) {
+        let s = await this.db.get("msgs", a);
+        if (((n = String(n || "").trim().slice(0, 6e3)), !s || s.from !== this.pk || s.kind !== "text" || !n || n === s.text)) return;
+        await this.applyEdit(e, a, n, this.pk, be()),
+          await this.sendApp(e, { t: "edit", id: a, x: n }, { noTtl: !0 });
+      }
+      /** Mensagens fixadas ficam na conversa (as 50 mais recentes). */
+      async applyPin(e, a, n, s) {
+        if (typeof a != "string" || !Re.test(a)) return;
+        let o = this.chatFor(e),
+          r = (o.pins || []).filter((i) => i !== a);
+        n && r.unshift(a), (o.pins = r.slice(0, 50)), await this.saveChat(o), this.emit("pins", e);
+      }
+      async setPin(e, a, n) {
+        await this.applyPin(e, a, n, this.pk),
+          await this.sendApp(e, { t: "pin", id: a, on: n ? 1 : 0 }, { noTtl: !0 });
+      }
+      /** Enquete: pergunta, de 2 a 10 opções, e se aceita mais de uma resposta. */
+      async addPoll(e, a, n, s, o) {
+        let r = ie(n.q, 200),
+          i = (Array.isArray(n.o) ? n.o : []).map((c) => ie(c, 80)).filter(Boolean).slice(0, 10);
+        !r ||
+          i.length < 2 ||
+          (await this.addMsg(
+            e,
+            {
+              id: a.id,
+              from: s,
+              kind: "poll",
+              poll: { q: r, o: i, m: n.m ? 1 : 0 },
+              votes: {},
+              ts: a.created_at * 1e3,
+              exp: this.expOf(a),
+              status: o ? "sent" : void 0,
+            },
+            !o,
+          ));
+      }
+      async sendPoll(e, a, n, s) {
+        let o = { t: "poll", q: ie(a, 200), o: n.map((i) => ie(i, 80)).filter(Boolean).slice(0, 10), m: s ? 1 : 0 };
+        if (!o.q || o.o.length < 2) return null;
+        let r = this.build(e, jt, JSON.stringify(o));
+        return (
+          await this.ensureDmContact(e),
+          this.localSend(e, { id: r.rumor.id, from: this.pk, kind: "poll", poll: { q: o.q, o: o.o, m: o.m }, votes: {}, ts: r.rumor.created_at * 1e3 }, r)
+        );
+      }
+      async applyVote(e, a, n, s) {
+        if (typeof a != "string" || !Re.test(a)) return;
+        let o = await this.db.get("msgs", a);
+        if (!o || o.chat !== e || o.kind !== "poll") return;
+        let r = [...new Set((Array.isArray(n) ? n : []).filter((i) => Number.isInteger(i) && i >= 0 && i < o.poll.o.length))];
+        o.poll.m || (r = r.slice(0, 1)),
+          (o.votes = o.votes || {}),
+          r.length ? (o.votes[s] = r) : delete o.votes[s],
+          await this.db.put("msgs", o),
+          this.emit("msgUpdate", e, o);
+      }
+      async vote(e, a, n) {
+        await this.applyVote(e, a, n, this.pk),
+          await this.sendApp(e, { t: "vote", id: a, v: n }, { noTtl: !0 });
+      }
+      /** Online / ausente: só entre contatos aceitos, e só se a pessoa deixar. */
+      presenceOf(e) {
+        if (!this.settings.presence) return null;
+        let a = this.presence && this.presence.get(e);
+        return !a || Date.now() - a.at > JM_PRES_TTL || a.s === "off" ? null : a.s;
+      }
+      async setPresence(e, a = !1) {
+        let jmD = jmCleanStatus(this.me && this.me.st),
+          n = this.settings.presence ? (jmD && jmD.dnd ? "dnd" : e) : "off",
+          s = Date.now();
+        if (!a && this.myPres && this.myPres.s === n && s - this.myPres.at < JM_PRES_HEARTBEAT) return;
+        if (n === "off" && (!this.myPres || this.myPres.s === "off") && !a) return;
+        this.myPres = { s: n, at: s };
+        for (let o of [...this.contacts.values()].filter((r) => r.status === "ok"))
+          try {
+            await this.sendApp("dm:" + o.pk, { t: "pres", s: n }, { ephemeral: !0, selfCopy: !1, noTtl: !0 });
+          } catch {}
+      }
+      // ---- Eventos ----
+      async addEvent(e, a, n, s, o) {
+        let r = ie(n.ti, 120),
+          i = Number(n.at);
+        !r ||
+          !(i >= 15778368e5 && i < 41024448e5) ||
+          (await this.addMsg(e, { id: a.id, from: s, kind: "event", evt: { ti: r, at: i, d: ie(n.d, 500) }, rsvp: {}, ts: a.created_at * 1e3, exp: this.expOf(a), status: o ? "sent" : void 0 }, !o));
+      }
+      async sendEvent(e, a, n, s) {
+        if (((a = ie(a, 120)), !a)) throw new Error("D\xEA um nome ao evento.");
+        if (!(n > Date.now() - 36e5)) throw new Error("A data do evento j\xE1 passou.");
+        let o = { t: "evt", ti: a, at: n };
+        (s = ie(s, 500)) && (o.d = s);
+        let r = this.build(e, jt, JSON.stringify(o));
+        return await this.ensureDmContact(e), this.localSend(e, { id: r.rumor.id, from: this.pk, kind: "event", evt: { ti: a, at: n, d: s || "" }, rsvp: {}, ts: r.rumor.created_at * 1e3 }, r);
+      }
+      async applyRsvp(e, a, n, s) {
+        if (typeof a != "string" || !Re.test(a)) return;
+        let o = await this.db.get("msgs", a);
+        !o ||
+          o.chat !== e ||
+          o.kind !== "event" ||
+          ((o.rsvp = o.rsvp || {}), ["y", "m", "n"].includes(n) ? (o.rsvp[s] = n) : delete o.rsvp[s], await this.db.put("msgs", o), this.emit("msgUpdate", e, o));
+      }
+      async rsvp(e, a, n) {
+        await this.applyRsvp(e, a, n, this.pk), await this.sendApp(e, { t: "rsvp", id: a, r: n }, { noTtl: !0 });
+      }
+      // ---- Visualização única e encaminhar ----
+      async markVoOpened(e, a, n) {
+        if (typeof a != "string" || !Re.test(a)) return;
+        let s = await this.db.get("msgs", a);
+        if (!s || s.chat !== e || s.kind !== "media" || !s.media || !s.media.vo || s.media.opened) return;
+        if (n && s.from !== this.pk) return;
+        (s.media.opened = 1), delete s.media.th, await this.db.del("media", s.media.mid), await this.db.put("msgs", s), this.emit("msgUpdate", e, s);
+      }
+      /** Abre a mídia de visualização única uma vez: devolve o Blob e apaga. */
+      async openViewOnce(e, a) {
+        let n = await this.db.get("msgs", a);
+        if (!n || !n.media || !n.media.vo || n.media.opened || n.from === this.pk) throw new Error("Esta m\xEDdia j\xE1 foi aberta.");
+        if (!n.media.ready) throw new Error("Ainda chegando\u2026");
+        let s = await this.mediaBlob(n.media.mid);
+        if (!s) throw new Error("M\xEDdia indispon\xEDvel");
+        return (
+          await this.markVoOpened(e, a, !1),
+          e.startsWith("dm:") && this.sendApp(e, { t: "voo", id: a }, { noTtl: !0, selfCopy: !1 }).catch(() => {}),
+          s
+        );
+      }
+      async forward(e, a) {
+        let n = await this.db.get("msgs", e);
+        if (!n) throw new Error("Mensagem n\xE3o encontrada");
+        if (n.kind === "text") return this.sendText(a, n.text, { fwd: !0, lp: n.lp });
+        if (n.kind === "sound") return this.sendSound(a, n.snd);
+        if (n.kind !== "media" || !n.media) throw new Error("Este tipo de mensagem n\xE3o pode ser encaminhado.");
+        let s = n.media;
+        if (s.vo) throw new Error("Visualiza\xE7\xE3o \xFAnica n\xE3o pode ser encaminhada.");
+        let o = await this.mediaBlob(s.mid);
+        if (!o) throw new Error("A m\xEDdia ainda n\xE3o chegou inteira.");
+        return this.sendMedia(a, new Uint8Array(await o.arrayBuffer()), { type: s.type, mime: s.mime, dur: s.dur, wf: s.wf, w: s.w, h: s.h, th: s.th, sb: s.sb, name: s.name, fwd: !0 });
+      }
+      // ---- Backup e a mesma conta em vários aparelhos (mesmo formato do PC) ----
+      async deviceId() {
+        let e = await this.kv("deviceId", null);
+        return e || ((e = Ka(8)), await this.setKv("deviceId", e)), e;
+      }
+      /** Retrato da conta. Com mensagens é o backup; sem, vai para o outro aparelho. */
+      async snapshot(e) {
+        let a = this.me || {},
+          n = { name: a.name || "", note: a.note || "", t: a.t | 0, games: a.games || [] };
+        e && ((n.pic = a.pic || null), (n.banner = a.banner || null));
+        let s = [...this.contacts.values()].map((c) => {
+            let l = { pk: c.pk, name: c.name || "", nick: c.nick || "", note: c.note || "", t: c.t | 0, status: c.status, verified: !!c.verified, relays: c.relays || [], games: c.games || [], addedAt: c.addedAt || 0 };
+            return e && ((l.pic = c.pic || null), (l.banner = c.banner || null)), l;
+          }),
+          o = [...this.groups.values()]
+            .filter((c) => !c.left)
+            .map((c) => {
+              let l = { lid: c.lid, sk: c.sk, old: (c.oldKeys || []).map((u) => u.sk), meta: c.meta, ver: c.ver, picV: c.picV || 0, mute: !!c.mute, gone: c.gone || [] };
+              return e && (l.pic = c.pic || null), l;
+            }),
+          r = [...this.chats.values()].map((c) => ({ key: c.key, ttl: c.ttl || 0, muted: !!c.muted, pinned: !!c.pinned, pins: c.pins || [] })),
+          i = {
+            v: 1,
+            app: "jmenseger",
+            by: "android",
+            dev: await this.deviceId(),
+            at: ve(),
+            me: n,
+            contacts: s,
+            groups: o,
+            chats: r,
+            settings: { readReceipts: !!this.settings.readReceipts, typing: !!this.settings.typing, presence: this.settings.presence !== !1, ttlDefault: this.settings.ttlDefault | 0, relays: this.settings.relays },
+          };
+        if (e) {
+          let c = [];
+          for (let l of await this.db.all("msgs")) {
+            if (!["text", "sys", "sound", "poll", "event", "deleted"].includes(l.kind)) continue;
+            let u = { id: l.id, chat: l.chat, from: l.from, ts: l.ts, kind: l.kind };
+            for (let d of ["text", "sys", "v", "snd", "poll", "votes", "evt", "rsvp", "reply", "reacts", "status", "exp", "edited"]) l[d] !== void 0 && l[d] !== null && (u[d] = l[d]);
+            u.status === "failed" && (u.status = "pending"), c.push(u);
+          }
+          i.msgs = c.sort((l, u) => l.ts - u.ts);
+        }
+        return i;
+      }
+      /** Junta um retrato com o que já existe. Nada é apagado. */
+      async mergeSnapshot(e, a) {
+        if (!e || e.v !== 1) throw new Error("Vers\xE3o de backup desconhecida.");
+        let n = { contacts: 0, groups: 0, messages: 0 },
+          s = e.me || {};
+        (a || !(this.me && this.me.name)) &&
+          s.name &&
+          (await this.updateProfile({ name: s.name, note: s.note, t: Number.isInteger(s.t) ? s.t % 6 : void 0, pic: !(this.me && this.me.pic) && s.pic ? s.pic : void 0 }).catch(() => {}));
+        let o = { request: 0, ok: 1, blocked: 2 };
+        for (let c of Array.isArray(e.contacts) ? e.contacts : []) {
+          if (!c || !Re.test(c.pk) || c.pk === this.pk || !(c.status in o)) continue;
+          let l = this.contacts.get(c.pk),
+            u = l || (await this.ensureContact(c.pk, c.status));
+          !l && n.contacts++,
+            u.name || (u.name = ie(c.name, 40)),
+            u.note || (u.note = ie(c.note, 80)),
+            c.nick && (u.nick = ie(c.nick, 40)),
+            Number.isInteger(c.t) && (u.t = c.t % 6),
+            (!l || o[c.status] > o[u.status]) && (u.status = c.status),
+            (u.verified = !!(u.verified || c.verified)),
+            (u.relays && u.relays.length) || (u.relays = (Array.isArray(c.relays) ? c.relays : []).map(ha).filter(Boolean).slice(0, 5)),
+            (u.games && u.games.length) || !Array.isArray(c.games) || (u.games = jmCleanGames(c.games));
+          if (!u.pic && c.pic) {
+            let d = ma(c.pic);
+            d && (u.pic = d);
+          }
+          if (!u.banner && c.banner) {
+            let d = jmCleanBanner(c.banner);
+            d && (u.banner = d);
+          }
+          await this.db.put("contacts", u), this.emit("contact", u);
+        }
+        let r = !1;
+        for (let c of Array.isArray(e.groups) ? e.groups : []) {
+          if (!c || typeof c.sk != "string" || !Re.test(c.sk)) continue;
+          let l = Ke(_t(c.sk)),
+            u = Re.test(c.lid) ? c.lid : l,
+            d = this.groups.get(u),
+            f = Number(c.ver) || 1;
+          if (d && !d.left && d.ver >= f) continue;
+          let p = this.cleanMeta(c.meta, "");
+          if (!p) continue;
+          let v = {
+            ...(d || {}),
+            lid: u,
+            pk: l,
+            sk: c.sk,
+            oldKeys: (Array.isArray(c.old) ? c.old : []).filter((k) => typeof k == "string" && Re.test(k)).slice(0, 20).map((k) => ({ pk: Ke(_t(k)), sk: k })),
+            meta: p,
+            ver: f,
+            picV: Number(c.picV) || 0,
+            mute: !!c.mute,
+            gone: (Array.isArray(c.gone) ? c.gone : []).filter((k) => typeof k == "string").slice(0, 50),
+            joinedAt: (d && d.joinedAt) || ve(),
+          };
+          if ((delete v.left, !v.pic && c.pic)) {
+            let k = ma(c.pic);
+            k && (v.pic = k);
+          }
+          this.groups.set(u, v), await this.saveGroup(v), (!d || d.left) && (n.groups++, (r = !0));
+        }
+        r && this.resubscribe();
+        let i = new Set();
+        for (let c of Array.isArray(e.msgs) ? e.msgs : []) {
+          if (!c || !Re.test(c.id) || !Re.test(c.from) || typeof c.chat != "string" || !/^(dm:[0-9a-f]{64}|g:[0-9a-f]{64}:[a-z0-9-]+)$/.test(c.chat)) continue;
+          if (!["text", "sys", "sound", "poll", "event", "deleted"].includes(c.kind) || !Number.isFinite(c.ts)) continue;
+          if (await this.db.get("msgs", c.id)) continue;
+          let l = { id: c.id, chat: c.chat, from: c.from, ts: c.ts, kind: c.kind };
+          c.kind === "text" && (l.text = ie(c.text, 6e3)),
+            c.kind === "sys" && ((l.sys = ie(c.sys, 20)), (l.v = Number(c.v) || 0)),
+            c.kind === "sound" && (l.snd = ie(c.snd, 20)),
+            c.kind === "poll" &&
+              c.poll &&
+              ((l.poll = { q: ie(c.poll.q, 200), o: (Array.isArray(c.poll.o) ? c.poll.o : []).map((k) => ie(k, 80)).slice(0, 10), m: c.poll.m ? 1 : 0 }), (l.votes = c.votes && typeof c.votes == "object" ? c.votes : {})),
+            Re.test(c.reply || "") && (l.reply = c.reply),
+            c.reacts && typeof c.reacts == "object" && (l.reacts = c.reacts),
+            ["pending", "sent", "delivered", "read"].includes(c.status) && (l.status = c.status),
+            Number.isFinite(c.exp) && (l.exp = c.exp),
+            Number.isFinite(c.edited) && (l.edited = c.edited);
+          c.kind === "event" &&
+            c.evt &&
+            ((l.evt = { ti: ie(c.evt.ti, 120), at: Number(c.evt.at) || 0, d: ie(c.evt.d, 500) }), (l.rsvp = c.rsvp && typeof c.rsvp == "object" ? c.rsvp : {}));
+          if (l.exp && l.exp <= ve()) continue;
+          await this.db.put("msgs", l), n.messages++, i.add(c.chat);
+        }
+        for (let c of Array.isArray(e.chats) ? e.chats : []) {
+          if (!c || typeof c.key != "string" || !/^(dm:[0-9a-f]{64}|g:[0-9a-f]{64}:[a-z0-9-]+)$/.test(c.key) || c.key === "dm:" + this.pk) continue;
+          let l = this.chatFor(c.key);
+          Number.isFinite(c.ttl) && (l.ttl = Math.max(0, Math.min(28 * Za, c.ttl))),
+            typeof c.muted == "boolean" && (l.muted = c.muted),
+            typeof c.pinned == "boolean" && (l.pinned = c.pinned),
+            Array.isArray(c.pins) && c.pins.length && (l.pins = c.pins.filter((u) => Re.test(u)).slice(0, 50)),
+            await this.saveChat(l),
+            i.add(c.key);
+        }
+        for (let c of i) await this.refreshLast(c);
+        if (a && e.settings) {
+          let c = e.settings;
+          for (let [l, u] of [["readReceipts", "boolean"], ["typing", "boolean"], ["presence", "boolean"], ["ttlDefault", "number"]])
+            typeof c[l] === u && (this.settings[l] = c[l]);
+          await this.setKv("settings", this.settings), this.emit("settings", this.settings);
+        }
+        return this.emit("chats"), n;
+      }
+      async exportBackup() {
+        let e = JSON.stringify(await this.snapshot(!0));
+        return jmSeal(this.sk, e);
+      }
+      async importBackup(e) {
+        let a = await jmOpen(this.sk, e),
+          n;
+        try {
+          n = JSON.parse(a);
+        } catch {
+          throw new Error("Backup corrompido.");
+        }
+        return this.mergeSnapshot(n, !0);
+      }
+      async sendSelf(e) {
+        if (!this.pool) return !1;
+        let a = Sd(this.sk, jt, JSON.stringify(e), [["p", this.pk]]),
+          n = oi(a, this.sk, this.pk, { expiration: be() + 2 * Za });
+        return (await this.pool.publish(n, [])).ok;
+      }
+      async onSelfApp(e) {
+        if (!e || typeof e.t != "string") return;
+        let a = await this.deviceId();
+        if (e.dev === a) return;
+        if (e.t === "sreq") return void this.syncPush(!0).catch(() => {});
+        if (e.t === "dev" && typeof e.dev == "string" && e.dev.length <= 32) {
+          if ((await this.kv("devicesOff", [])).includes(e.dev)) return;
+          let n = await this.kv("devices", {});
+          return (n[e.dev] = { n: ie(e.n, 40) || "Aparelho", p: ie(e.p, 20), last: Date.now() }), await this.setKv("devices", n), void this.emit("devices");
+        }
+        if (e.t === "devoff" && typeof e.dev == "string") {
+          if (e.dev === a) return void this.emit("remoteLogout");
+          let n = await this.kv("devices", {});
+          return delete n[e.dev], await this.setKv("devices", n), void this.emit("devices");
+        }
+        if (e.t === "sync" && e.d) {
+          let n = await this.mergeSnapshot(e.d, !1);
+          n.contacts + n.groups > 0 && this.emit("synced", n);
+        }
+      }
+      async announceDevice() {
+        let e = (navigator.userAgent.match(/Android[^;]*;\s*([^;)]+?)(?:\s+Build|\))/) || [])[1] || "Celular";
+        await this.sendSelf({ t: "dev", dev: await this.deviceId(), n: ie(e, 40), p: "Android" });
+      }
+      async devices() {
+        let e = await this.kv("devices", {});
+        return Object.entries(e)
+          .map(([a, n]) => ({ id: a, ...n }))
+          .sort((a, n) => (n.last || 0) - (a.last || 0));
+      }
+      async removeDevice(e) {
+        let a = await this.kv("devices", {});
+        delete a[e], await this.setKv("devices", a);
+        let n = await this.kv("devicesOff", []);
+        n.includes(e) || n.push(e), await this.setKv("devicesOff", n);
+        let s = Sd(this.sk, jt, JSON.stringify({ t: "devoff", dev: e }), [["p", this.pk]]);
+        await this.pool.publish(oi(s, this.sk, this.pk, { expiration: be() + 30 * Za }), []), this.emit("devices");
+      }
+      async setMyStatus(e) {
+        (this.me.st = jmCleanStatus(e) || void 0), this.me.st || delete this.me.st, await this.setKv("me", this.me);
+        for (let a of [...this.contacts.values()].filter((n) => n.status === "ok"))
+          try {
+            await this.sendProfile(a.pk);
+          } catch {}
+        this.setPresence("on", !0).catch(() => {});
+      }
+      statusOf(e) {
+        let a = this.contacts.get(e);
+        return a ? jmCleanStatus(a.st) : null;
+      }
+      /** Pede aos outros aparelhos da conta o que eles têm (uma vez por instalação). */
+      async syncRequest() {
+        (await this.kv("syncReq", !1)) || ((await this.sendSelf({ t: "sreq", dev: await this.deviceId() })) && (await this.setKv("syncReq", !0)));
+      }
+      /** Manda contatos, grupos e ajustes para os outros aparelhos, em pedaços. */
+      async syncPush(e) {
+        if (!this.pool || this.pool.openCount() === 0) return;
+        let a = await this.snapshot(!1),
+          n = JSON.stringify({ ...a, at: null }),
+          s = Nt(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(n)))).slice(0, 24);
+        if (!e && (await this.kv("syncHash", "")) === s) return;
+        if (!e && !a.contacts.length && !a.groups.length) return void (await this.setKv("syncHash", s));
+        let o = { contacts: a.contacts, groups: a.groups, chats: a.chats },
+          r = { ...a, contacts: [], groups: [], chats: [] },
+          i = [],
+          c = JSON.parse(JSON.stringify(r));
+        for (let l of ["contacts", "groups", "chats"])
+          for (let u of o[l]) {
+            let d = JSON.stringify(u).length;
+            d > 24e3 || (JSON.stringify(c).length + d > 24e3 && (i.push(c), (c = JSON.parse(JSON.stringify(r)))), c[l].push(u));
+          }
+        i.push(c);
+        for (let l of i) if (!(await this.sendSelf({ t: "sync", dev: a.dev, d: l }))) return;
+        await this.setKv("syncHash", s);
+      }
       async deleteForAll(e, a) {
-        await this.applyDelete(e, a, this.pk),
+        let jmG = e.startsWith("g:") && this.groups.get(e.split(":")[1]);
+        await this.applyDelete(e, a, this.pk, !!jmG && jmCan(jmG.meta, this.pk, "del")),
           await this.sendApp(e, { t: "del", ids: a }, { noTtl: !0 });
       }
       async deleteForMe(e, a) {
@@ -11051,6 +11634,7 @@ zoo`.split(`
             p: this.me.pic || "",
             r: this.settings.relays.slice(0, 5),
             g: this.me.games || [],
+            ...(jmCleanStatus(this.me.st) ? { st: jmCleanStatus(this.me.st) } : {}),
           },
           { selfCopy: !1, noTtl: !0 },
         );
@@ -11273,9 +11857,10 @@ zoo`.split(`
         return this.db.msgsByChat(e, a, n);
       }
       async sendMedia(e, a, n, s) {
-        if ((a instanceof Uint8Array || (a = new Uint8Array(a)), a.length > ci))
-          throw new Error("Arquivo grande demais");
-        if (!Ld.test(n.mime)) throw new Error("Formato n\xE3o suportado");
+        let jmArq = n.type === "file";
+        if ((a instanceof Uint8Array || (a = new Uint8Array(a)), a.length > (jmArq ? JM_FILE_MAX : ci)))
+          throw new Error(jmArq ? "Arquivo grande demais (at\xE9 5 MB)" : "Arquivo grande demais");
+        if (!(jmArq ? JM_FILE_MIME : Ld).test(n.mime)) throw new Error("Formato n\xE3o suportado");
         await this.ensureDmContact(e);
         let o = Ka(16),
           r = Math.ceil(a.length / Xs),
@@ -11288,10 +11873,12 @@ zoo`.split(`
             n: r,
             sha: In(a),
           };
-        n.dur && (i.dur = Math.round(n.dur)),
+        jmArq && (i.fn = jmFileName(n.name)),
+          !jmArq && n.vo && !n.sb && (i.vo = 1),
+          n.dur && (i.dur = Math.round(n.dur)),
           n.wf && (i.wf = n.wf.slice(0, 48)),
           n.w && ((i.w = n.w), (i.h = n.h)),
-          n.th && n.th.length < 3e3 && (i.th = n.th),
+          n.th && n.th.length < 3e3 && !i.vo && (i.th = n.th),
           n.sb &&
             n.type === "audio" &&
             (i.sb = {
@@ -11299,7 +11886,7 @@ zoo`.split(`
               e: ie(n.sb.e, 8) || "\u{1F50A}",
             });
         let c = new Blob([a], { type: n.mime }),
-          l = this.build(e, jt, JSON.stringify(i));
+          l = this.build(e, jt, JSON.stringify(i), n.fwd ? [["fwd", "1"]] : []);
         await this.db.put("media", {
           mid: o,
           msgId: l.rumor.id,
@@ -11319,11 +11906,13 @@ zoo`.split(`
           h: i.h,
           th: i.th,
           sb: i.sb,
+          name: i.fn,
+          vo: i.vo,
           got: r,
           ready: !0,
           sent: 0,
         };
-        u.sb || delete u.sb;
+        u.sb || delete u.sb, u.name || delete u.name, u.vo || delete u.vo;
         let d = await this.localSend(
           e,
           {
@@ -11331,6 +11920,7 @@ zoo`.split(`
             from: this.pk,
             kind: "media",
             media: u,
+            fwd: n.fwd ? !0 : void 0,
             ts: l.rumor.created_at * 1e3,
           },
           l,
@@ -11354,12 +11944,14 @@ zoo`.split(`
       async onMediaHeader(e, a, n, s, o) {
         if (typeof n.mid != "string" || !/^[0-9a-f]{32}$/.test(n.mid)) return;
         let r = parseInt(n.n, 10),
-          i = parseInt(n.size, 10);
+          i = parseInt(n.size, 10),
+          jmArq = n.type === "file",
+          jmLim = jmArq ? JM_FILE_MAX : ci;
         if (
-          !(r > 0 && r <= Math.ceil(ci / Xs)) ||
-          !(i > 0 && i <= ci) ||
-          !Ld.test(n.mime || "") ||
-          (n.type !== "audio" && n.type !== "image")
+          !(r > 0 && r <= Math.ceil(jmLim / Xs)) ||
+          !(i > 0 && i <= jmLim) ||
+          !(jmArq ? JM_FILE_MIME : Ld).test(n.mime || "") ||
+          (n.type !== "audio" && n.type !== "image" && !jmArq)
         )
           return;
         !o && e.startsWith("dm:") && (await this.ensureContact(s, "request"));
@@ -11373,6 +11965,7 @@ zoo`.split(`
           got: 0,
           ready: !1,
         };
+        jmArq && (c.name = jmFileName(n.fn)), !jmArq && n.vo === 1 && (c.vo = 1);
         n.dur && (c.dur = Math.min(3600, parseInt(n.dur, 10) || 0)),
           Array.isArray(n.wf) &&
             (c.wf = n.wf
@@ -11402,6 +11995,7 @@ zoo`.split(`
               from: s,
               kind: "media",
               media: c,
+              fwd: Wa(a, "fwd") ? !0 : void 0,
               ts: a.created_at * 1e3,
               exp: this.expOf(a),
               status: o ? "sent" : void 0,
@@ -11417,7 +12011,7 @@ zoo`.split(`
           !/^[0-9a-f]{32}$/.test(e.mid) ||
           !Number.isInteger(e.i) ||
           e.i < 0 ||
-          e.i > 200 ||
+          e.i >= Math.ceil(JM_FILE_MAX / Xs) ||
           typeof e.d != "string" ||
           e.d.length > 3e4
         )
@@ -11521,6 +12115,7 @@ zoo`.split(`
             .slice(0, 10),
           members: s,
           names: r,
+          ...jmCleanRoles(e, s),
         };
       }
       parseInvite(e) {
@@ -11748,6 +12343,34 @@ zoo`.split(`
             : (n.meta.admins || []).filter(
                 (i) => i !== o && i !== n.meta.owner,
               );
+        }
+        if (a.addRole) {
+          let o = (n.meta.roles = n.meta.roles || []);
+          if (o.length < 12) {
+            let r = { id: Ka(4).slice(0, 8), n: ie(a.addRole.n, 24) || "Cargo", c: (a.addRole.c | 0) % 8 },
+              i = (a.addRole.p || []).filter((c) => JM_PERMS.some(([l]) => l === c));
+            i.length && (r.p = i), o.push(r);
+          }
+        }
+        if (a.editRole) {
+          let o = (n.meta.roles || []).find((r) => r.id === a.editRole.id);
+          o &&
+            (a.editRole.n !== void 0 && (o.n = ie(a.editRole.n, 24) || o.n),
+            a.editRole.c !== void 0 && (o.c = (a.editRole.c | 0) % 8),
+          Array.isArray(a.editRole.p) && (a.editRole.p.length ? (o.p = a.editRole.p.filter((r) => JM_PERMS.some(([i]) => i === r))) : delete o.p));
+        }
+        if (a.removeRole) {
+          n.meta.roles = (n.meta.roles || []).filter((o) => o.id !== a.removeRole);
+          for (let o of Object.keys(n.meta.mroles || {}))
+            (n.meta.mroles[o] = n.meta.mroles[o].filter((r) => r !== a.removeRole)),
+              n.meta.mroles[o].length || delete n.meta.mroles[o];
+        }
+        if (a.memberRole) {
+          let { pk: o, id: r, on: i } = a.memberRole,
+            c = (n.meta.mroles = n.meta.mroles || {}),
+            l = (c[o] || []).filter((u) => u !== r);
+          i && (n.meta.roles || []).some((u) => u.id === r) && l.length < 4 && l.push(r),
+            l.length ? (c[o] = l) : delete c[o];
         }
         n.ver++, await this.saveGroup(n), await this.publishMeta(n);
         for (let o of s)
@@ -12037,6 +12660,29 @@ zoo`.split(`
       },
       cancelNotify(t) {
         me("cancelNotify", t);
+      },
+      updateCheck() {
+        me("updateCheck");
+      },
+      /** A tela está aberta? (no navegador, sempre) */
+      foreground() {
+        return !Ie || me("foreground") !== !1;
+      },
+      /** Grava um arquivo (base64) na pasta Download; devolve onde ficou, "" se falhou, undefined no navegador. */
+      linkPreview(t, e) {
+        me("linkPreview", t, e);
+      },
+      screenStart() {
+        me("screenStart");
+      },
+      screenStop() {
+        me("screenStop");
+      },
+      saveFile(t, e) {
+        return Ie ? me("saveFile", t, e) || "" : void 0;
+      },
+      updateDownload() {
+        me("updateDownload");
       },
       incomingCall(t) {
         me("incomingCall", JSON.stringify(t));
@@ -16150,6 +16796,7 @@ zoo`.split(`
     let s = J.open(
       "chat",
       `<header class="chathead">${Tu()}</header>
+    <div id="pinbar"></div>
     <div class="msgs" id="msgs"></div>
     <div id="cfoot">${Ri()}</div>
     <div class="popbar" id="pop" hidden></div>`,
@@ -16164,6 +16811,7 @@ zoo`.split(`
       ((C.msgs = r),
       (C.more = r.length >= xo),
       Zt({ end: !0, intro: !0 }),
+      jmPinBar(),
       a.setActive(t, h.visible),
       X.cancelNotify(t),
       P.refreshLists(),
@@ -16201,6 +16849,13 @@ zoo`.split(`
         return {
           html: `<span class="lstat">${x("music", "xs")} Ouvindo ${M(lis.s)}${lis.a ? " \u2014 " + M(lis.a) : ""}</span>`,
         };
+      let jmPr = t.presenceOf && t.presenceOf(e.pk),
+        jmSt = t.statusOf && t.statusOf(e.pk);
+      if (jmSt)
+        return { html: `<span class="pres ${jmSt.dnd ? "dnd" : jmPr || "off"}"><i></i>${M(((jmSt.e || "") + " " + (jmSt.t || (jmSt.dnd ? "N\xE3o perturbe" : ""))).trim())}</span>` };
+      if (jmPr === "dnd") return { html: '<span class="pres dnd"><i></i>n\xE3o perturbe</span>' };
+      if (jmPr)
+        return { live: jmPr === "on", html: `<span class="pres ${jmPr}"><i></i>${jmPr === "on" ? "online" : "ausente"}</span>` };
       return o && o.status === "request"
         ? { html: "Fora dos seus contatos" }
         : e.ttl
@@ -16247,7 +16902,7 @@ zoo`.split(`
       if (a && a.status === "blocked")
         return '<div class="reqbar"><p>Voc\xEA bloqueou este contato.</p><div class="two"><button class="btn" data-act="reqUnblock">Desbloquear</button></div></div>';
     }
-    return `<div class="composer" id="composer"><div id="replyslot"></div><div id="cbody">${Ii()}</div></div>`;
+    return `<div class="composer" id="composer"><div id="mentslot"></div><div id="replyslot"></div><div id="cbody">${Ii()}</div></div>`;
   }
   function Ii() {
     return C && C.rec
@@ -16321,6 +16976,8 @@ zoo`.split(`
   function x0(t) {
     let e = h.engine;
     if (t.kind === "deleted") return `${x("ban", "xs")} Mensagem apagada`;
+    if (t.kind === "poll") return jmPollHtml(t);
+    if (t.kind === "event") return jmEventHtml(t);
     if (t.kind === "sound") {
       let a = kt(t.snd) || { id: t.snd, e: "\u{1F50A}", n: "Som" };
       return `<div class="snd"><span class="semo">${M(a.e)}</span><div class="stx"><b>${M(a.n)}</b><small>${x("wave", "xs")} Soundboard</small></div><button class="pbtn" data-act="playSnd" data-id="${M(a.id)}" aria-label="Tocar ${M(a.n)}">${x("play")}</button></div>`;
@@ -16333,6 +16990,8 @@ zoo`.split(`
       return `<div class="invite"><div class="ih">${Pe({ meta: a.meta, pic: a.pic }, 44)}<div><b>${M(a.meta.name)}</b><small>Convite para grupo \xB7 ${o} ${o === 1 ? "membro" : "membros"}</small></div></div>
       ${n ? "" : s ? `<button class="btn ghost" data-act="openGroupLid" data-lid="${a.lid}">Abrir grupo</button>` : `<button class="btn" data-act="acceptInvite" data-id="${t.id}">Entrar no grupo</button>`}</div>`;
     }
+    if (t.kind === "media" && t.media.vo) return jmVoHtml(t);
+    if (t.kind === "media" && t.media.type === "file") return jmFileHtml(t);
     if (t.kind === "media") {
       let a = t.media,
         n = t.from === e.pk,
@@ -16359,7 +17018,7 @@ zoo`.split(`
           : `Recebendo ${a.got || 0}/${a.n}`;
       return `<span class="photo" style="${c}"><span class="ph" style="${a.th ? `background-image:url(${a.th})` : ""}"></span><span class="dl"><span>${a.err ? x("alert", "xs") : '<span class="spin"></span>'}${M(l)}</span></span></span>`;
     }
-    return Od(t.text || "");
+    return jmMentionHtml(Od(t.text || ""), C && C.chat) + (t.lp ? jmLpHtml(t.lp) : "");
   }
   function Bu(t, e, a, n = {}) {
     let s = h.engine;
@@ -16395,12 +17054,13 @@ zoo`.split(`
             : (q.meta.admins || []).includes(t.from)
               ? "Admin"
               : "");
-      f = `<div class="mname ${K ? "role" : ""}">${M(ne(t.from))}${K ? `<span class="rolepill">${K}</span>` : ""}</div>`;
+      let rc = q && jmRolesOf(q, t.from)[0];
+      f = `<div class="mname ${K ? "role" : ""}" ${rc ? `style="color:${JM_ROLE_CORES[rc.c]}"` : ""}>${M(ne(t.from))}${K ? `<span class="rolepill">${K}</span>` : ""}</div>`;
     }
-    let p = "";
+    let p = t.fwd ? `<div class="fwdtag">${x("share", "xs")} Encaminhada</div>` : "";
     if (t.reply) {
       let q = a.find((K) => K.id === t.reply);
-      p = `<div class="quote" data-act="jumpTo" data-id="${t.reply}"><b>${q ? M(q.from === s.pk ? "Voc\xEA" : ne(q.from)) : "Mensagem"}</b>${q ? M(s.preview(q)).slice(0, 140) : "Mensagem anterior"}</div>`;
+      p += `<div class="quote" data-act="jumpTo" data-id="${t.reply}"><b>${q ? M(q.from === s.pk ? "Voc\xEA" : ne(q.from)) : "Mensagem"}</b>${q ? M(s.preview(q)).slice(0, 140) : "Mensagem anterior"}</div>`;
     }
     let v =
         t.reacts && Object.keys(t.reacts).length
@@ -16424,7 +17084,9 @@ zoo`.split(`
         i ? "me" : "them",
         t.kind === "deleted" ? "del" : "",
         k ? "emoji" : "",
-        t.kind === "media" && t.media.type === "image" ? "img" : "",
+        !i && d && t.kind === "text" && jmMentionsMe(t.text, C.chat, t.from) ? "mentioned" : "",
+        t.kind === "poll" || t.kind === "event" ? "pollm" : "",
+        t.kind === "media" && t.media.type === "image" && !t.media.vo ? "img" : "",
       ].join(" "),
       N =
         d && !i
@@ -16432,7 +17094,7 @@ zoo`.split(`
             ? pe(t.from, 28, { badge: !1 })
             : '<span class="mslot"></span>'
           : "",
-      V = `<span class="meta">${t.exp ? x("timer", "timer") : ""}${so(t.ts)}${m0(t)}</span>`;
+      V = `<span class="meta">${t.edited && t.kind === "text" ? '<i class="edtag">editada</i>' : ""}${t.exp ? x("timer", "timer") : ""}${so(t.ts)}${m0(t)}</span>`;
     return `<div class="${["mrow", i ? "me" : "them", l ? "first" : "", u ? "last" : "", n.fresh ? "newm" : ""].join(" ")}" data-mid="${t.id}">${N}<div class="${L}" data-act="msgTap" data-id="${t.id}">${f}${p}${x0(t)}${V}${v}</div></div>`;
   }
   function Zt(t = {}) {
@@ -16575,7 +17237,15 @@ zoo`.split(`
     if (!C) return;
     let t = y("#msgin", C.el),
       e = t ? t.value.trim() : "";
+    if (!e && C.edit) return jmEditCancel();
     if (!e) return _u();
+    if (C.edit) {
+      let r = C.edit.id;
+      return (
+        (t.value = ""), vo(t), wo(), jmEditCancel(),
+        h.engine.editMsg(C.key, r, e).catch(() => _("N\xE3o foi poss\xEDvel editar."))
+      );
+    }
     let a = C.reply,
       jmFoco = document.activeElement === t;
     (t.value = ""),
@@ -16587,7 +17257,9 @@ zoo`.split(`
     let n = h.engine.chats.get(C.key);
     n && (n.draft = "");
     try {
-      await h.engine.sendText(C.key, e, { reply: a && a.id });
+      let jmU = h.engine.settings.linkPreviews !== !1 && X.available && (e.match(/https?:\/\/[^\s<]+/) || [])[0],
+        jmLp = jmU ? await jmLinkPreview(jmU.replace(/[.,)\]!?;:'"]+$/, "")) : null;
+      await h.engine.sendText(C.key, e, { reply: a && a.id, lp: jmLp });
     } catch (s) {
       _(s.message || "N\xE3o foi poss\xEDvel enviar.");
     }
@@ -16784,7 +17456,7 @@ zoo`.split(`
       (i
         ? `<button style="--i:7" data-act="copyMsg" aria-label="Copiar">${x("copy", "sm")}</button>`
         : "") +
-      `<button style="--i:8" data-act="delMsg" aria-label="Apagar">${x("trash", "sm")}</button>`),
+      `<button style="--i:8" data-act="msgMore" aria-label="Mais op\xE7\xF5es">${x("more", "sm")}</button>`),
       (s.hidden = !1);
     let c = e.getBoundingClientRect(),
       l = o.getBoundingClientRect(),
@@ -16819,6 +17491,618 @@ zoo`.split(`
     },
     !0,
   );
+  // ===== Recursos menores: editar, fixar, buscar, enquetes, menções, online e cargos =====
+  var JM_ROLE_CORES = ["#ef5350", "#ff9800", "#fdd835", "#4caf50", "#26a69a", "#42a5f5", "#ab47bc", "#ec407a"];
+  function jmRolesOf(t, e) {
+    let a = ((t.meta.mroles || {})[e] || []);
+    return (t.meta.roles || []).filter((n) => a.includes(n.id));
+  }
+  function jmMyNames(t) {
+    let e = h.engine,
+      a = [(e.me && e.me.name) || ""];
+    if (t && t.kind === "group") {
+      let n = e.groups.get(t.lid);
+      n && n.meta.names && n.meta.names[e.pk] && a.push(n.meta.names[e.pk]);
+    }
+    return a.map((n) => n.trim().toLowerCase()).filter(Boolean);
+  }
+  function jmMentionsMe(t, e, jmA) {
+    if (!t || !e || e.kind !== "group") return !1;
+    let a = String(t).toLowerCase(),
+      jmG = h.engine.groups.get(e.lid);
+    return (/(^|\s)@(todos|everyone)\b/.test(a) && !!jmG && !!jmA && jmCan(jmG.meta, jmA, "todos")) || jmMyNames(e).some((n) => a.includes("@" + n));
+  }
+  var jmRx = (t) => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  function jmMentionHtml(t, e) {
+    if (!e || e.kind !== "group" || t.indexOf("@") < 0) return t;
+    let a = h.engine.groups.get(e.lid);
+    if (!a) return t;
+    let n = jmMyNames(e),
+      s = [...new Set([...a.meta.members.map((o) => ne(o)), "todos"])].filter(Boolean).sort((o, r) => r.length - o.length);
+    for (let o of s) {
+      let r = new RegExp("(^|[\\s>(])@(" + jmRx(M(o)) + ")(?![\\p{L}\\p{N}])", "giu"),
+        i = o === "todos" || n.includes(o.toLowerCase());
+      t = t.replace(r, (c, l, u) => `${l}<span class="mention ${i ? "me" : ""}">@${u}</span>`);
+    }
+    return t;
+  }
+  // Sugestões ao digitar @ num grupo
+  function jmMentionSuggest(t) {
+    let e = y("#mentslot", C && C.el);
+    if (!e) return;
+    if (!C || C.chat.kind !== "group") return void (e.innerHTML = "");
+    let a = t.value.slice(0, t.selectionStart || t.value.length).match(/(^|\s)@([^\s@]{0,20})$/);
+    if (!a) return void (e.innerHTML = "");
+    let n = a[2].toLowerCase(),
+      s = h.engine.groups.get(C.chat.lid);
+    if (!s) return;
+    let o = s.meta.members
+      .filter((r) => r !== h.engine.pk)
+      .map((r) => ({ pk: r, n: ne(r) }))
+      .filter((r) => r.n.toLowerCase().includes(n))
+      .slice(0, 5);
+    "todos".startsWith(n) && o.push({ pk: "", n: "todos" }),
+      (e.innerHTML = o.length
+        ? `<div class="mentsug">${o.map((r) => `<button data-act="mentPick" data-n="${M(r.n)}">${r.pk ? pe(r.pk, 22, { badge: !1 }) : x("users", "xs")}<span>${M(r.n)}</span></button>`).join("")}</div>`
+        : "");
+  }
+  document.addEventListener("input", (t) => {
+    t.target.id === "msgin" && jmMentionSuggest(t.target);
+  });
+  b("mentPick", (t) => {
+    let e = y("#msgin", C.el);
+    if (!e) return;
+    let a = e.selectionStart || e.value.length,
+      n = e.value.slice(0, a).replace(/@([^\s@]{0,20})$/, "@" + t.dataset.n + " ");
+    (e.value = n + e.value.slice(a)), e.setSelectionRange(n.length, n.length), e.focus({ preventScroll: !0 }), vo(e), wo(), jmMentionSuggest(e);
+  });
+  // ---- Status personalizado e aparelhos conectados ----
+  var jmStDur = 0;
+  b("statusOpen", () => {
+    let t = jmCleanStatus(h.engine.me.st) || {};
+    (jmStDur = 0),
+      ee(`<h2 class="sh-title">Definir status</h2><p class="sh-sub">Aparece para os seus contatos, junto com a m\xFAsica do Spotify.</p>
+    <div style="display:flex;gap:8px"><input class="inp" id="ste" maxlength="8" placeholder="\u{1F3AE}" value="${M(t.e || "")}" style="width:64px;text-align:center"><input class="inp" id="stt" maxlength="80" placeholder="Ex.: Jogando Valorant" value="${M(t.t || "")}" autocomplete="off"></div>
+    <div class="stsug">${[["\u{1F3AE}", "Jogando"], ["\u{1F4DA}", "Estudando"], ["\u{1F4BC}", "Trabalhando"], ["\u{1F319}", "Dormindo"]].map(([e, a]) => `<button data-act="stSug" data-e="${e}" data-t="${a}">${e} ${a}</button>`).join("")}</div>
+    <label class="pick" style="padding:10px 2px"><span style="flex:1">N\xE3o perturbe<small style="display:block;opacity:.65">Sem som nem aviso de mensagem</small></span><input type="checkbox" id="stdnd" ${t.dnd ? "checked" : ""}></label>
+    <span class="lbl">Limpar depois de</span><div class="stdur">${["N\xE3o limpar", "1 hora", "4 horas", "Hoje"].map((e, a) => `<button class="${a === 0 ? "on" : ""}" data-act="stDur" data-d="${a}">${e}</button>`).join("")}</div>
+    <div class="two" style="margin-top:12px"><button class="btn ghost" data-act="stClear" style="margin:0">Tirar status</button><button class="btn" data-act="stSave" style="margin:0">Salvar</button></div>`);
+  });
+  b("stSug", (t) => {
+    (y("#ste").value = t.dataset.e), (y("#stt").value = t.dataset.t);
+  });
+  b("stDur", (t) => {
+    (jmStDur = +t.dataset.d), oe(".stdur button").forEach((e) => e.classList.toggle("on", e === t));
+  });
+  b("stSave", async () => {
+    let t = Date.now(),
+      e = new Date();
+    e.setHours(23, 59, 59, 0);
+    let a = [0, t + 36e5, t + 144e5, e.getTime()][jmStDur] || 0,
+      n = { e: y("#ste").value.trim(), t: y("#stt").value.trim(), dnd: y("#stdnd").checked, x: a };
+    F(), await h.engine.setMyStatus(n), _("Status atualizado"), P.refreshSettings && P.refreshSettings();
+  });
+  b("stClear", async () => {
+    F(), await h.engine.setMyStatus(null), _("Status removido");
+  });
+  b("devicesOpen", async () => {
+    let t = await h.engine.devices(),
+      e = Date.now(),
+      a = (n) => (e - n < 252e5 ? "Ativo recentemente" : e - n < 864e5 ? "Visto hoje" : `Visto h\xE1 ${Math.floor((e - n) / 864e5)} dias`);
+    J.open(
+      "devices",
+      `<div class="sc-top"><div class="subhead"><button class="ibtn" data-act="back" aria-label="Voltar">${x("back")}</button><h2>Aparelhos conectados</h2></div>
+    <div class="scroll"><div class="label">Este aparelho</div>
+      ${le({ i: "phone", n: "Este celular", s: "Android", act: "noop" })}
+      <div class="label">Outros aparelhos</div>
+      ${t.length ? t.map((n) => le({ i: n.p === "Android" || n.p === "iOS" ? "phone" : "server", n: M(n.n), s: `${M(n.p)} \xB7 ${a(n.last || 0)}`, act: "devOff", data: `data-id="${M(n.id)}" data-n="${M(n.n)}"` })).join("") : '<p class="note">Nenhum outro aparelho visto ainda. Eles aparecem aqui quando abrem o app.</p>'}
+      <p class="note">Toque num aparelho para desconectar: ele sai e apaga a conta assim que ficar on-line. Se algu\xE9m roubou suas 12 palavras, isso n\xE3o basta \u2014 crie uma conta nova e avise seus contatos.</p></div></div>`,
+    );
+  });
+  b("devOff", async (t) => {
+    (await ge({ title: "Desconectar " + t.dataset.n + "?", text: "O aparelho sai e apaga a conta dele assim que ficar on-line.", ok: "Desconectar", danger: !0 })) &&
+      (await h.engine.removeDevice(t.dataset.id), J.pop(), _("Pedido enviado"));
+  });
+  // ---- Volume de cada pessoa (só o que você ouve; fica guardado) ----
+  var jmVols = {};
+  function jmVolOf(t) {
+    let e = jmVols[t];
+    return typeof e == "number" ? Math.max(0, Math.min(1, e)) : 1;
+  }
+  async function jmVolLoad() {
+    try {
+      jmVols = (await h.engine.kv("vols", {})) || {};
+    } catch {}
+  }
+  function jmVolApply(t) {
+    let e = jmVolOf(t);
+    for (let a of oe(`audio[data-aud="${t}"], video[data-vid="${t}"]`)) a.volume = e;
+    let a = y("#rvid");
+    a && H && H.pk === t && (a.volume = e);
+  }
+  b("peerVol", (t) => {
+    let e = t.dataset.pk,
+      a = Math.round(jmVolOf(e) * 100);
+    ee(`<h2 class="sh-title">Volume de ${M(ne(e))}</h2><p class="sh-sub">S\xF3 muda o que voc\xEA ouve. Fica guardado para as pr\xF3ximas chamadas.</p>
+    <div class="volrow">${x("volume")}<input type="range" id="pvol" min="0" max="100" step="5" value="${a}" data-pk="${e}"><b id="pvolv">${a}%</b></div>
+    <button class="btn ghost" data-act="peerVolReset" data-pk="${e}">Voltar ao normal</button>`);
+  });
+  document.addEventListener("input", (t) => {
+    if (t.target.id !== "pvol") return;
+    let e = t.target.dataset.pk,
+      a = +t.target.value;
+    (jmVols[e] = a / 100), jmVolApply(e);
+    let n = y("#pvolv");
+    n && (n.textContent = a + "%"), clearTimeout(jmVolLoad.t), (jmVolLoad.t = setTimeout(() => h.engine.setKv("vols", jmVols), 400));
+  });
+  b("peerVolReset", (t) => {
+    delete jmVols[t.dataset.pk], jmVolApply(t.dataset.pk), h.engine.setKv("vols", jmVols), F();
+  });
+  // ---- Eventos ----
+  function jmEventHtml(t) {
+    let e = t.evt || {},
+      a = new Date(e.at),
+      n = ["dom", "seg", "ter", "qua", "qui", "sex", "s\xE1b"][a.getDay()] + ", " + a.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" }) + " \xE0s " + a.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" }),
+      s = e.at - Date.now(),
+      o = s < -108e5 ? "J\xE1 aconteceu" : s < 0 ? "Acontecendo agora" : s < 36e5 ? `Em ${Math.floor(s / 6e4) + 1} min` : s < 864e5 ? `Em ${Math.floor(s / 36e5)} h` : s < 1728e5 ? "Amanh\xE3" : `Em ${Math.floor(s / 864e5)} dias`,
+      r = t.rsvp || {},
+      i = (u) => Object.values(r).filter((d) => d === u).length,
+      c = r[h.engine.pk] || "",
+      l = (u, d) => `<button class="rsvpb ${c === d ? "on" : ""}" data-act="rsvp" data-id="${t.id}" data-r="${c === d ? "" : d}">${u}</button>`;
+    return `<div class="evcard"><div class="evh"><span class="evi">${x("clock", "sm")}</span><div><b>${M(e.ti)}</b><small>${M(n)} \xB7 ${o}</small></div></div>${e.d ? `<p>${M(e.d)}</p>` : ""}<small class="evc">${i("y")} v\xE3o \xB7 ${i("m")} talvez \xB7 ${i("n")} n\xE3o v\xE3o</small><div class="evb">${l("Vou", "y")}${l("Talvez", "m")}${l("N\xE3o vou", "n")}</div></div>`;
+  }
+  b("rsvp", async (t) => {
+    X.vibrate(10), await h.engine.rsvp(C.key, t.dataset.id, t.dataset.r);
+  });
+  b("evtNew", () => {
+    F();
+    let t = new Date(Date.now() + 864e5);
+    t.setHours(20, 0, 0, 0);
+    let e = new Date(t.getTime() - t.getTimezoneOffset() * 6e4).toISOString().slice(0, 16);
+    setTimeout(
+      () =>
+        ee(`<h2 class="sh-title">Novo evento</h2><p class="sh-sub">Todos podem responder Vou, Talvez ou N\xE3o vou. Quem vai recebe um lembrete 15 minutos antes.</p>
+    <label class="lbl" for="evt">Nome</label><input class="inp" id="evt" maxlength="120" placeholder="Ex.: Jogatina de s\xE1bado" autocomplete="off">
+    <label class="lbl" for="evq">Quando</label><input class="inp" id="evq" type="datetime-local" value="${e}">
+    <label class="lbl" for="evd">Descri\xE7\xE3o (opcional)</label><input class="inp" id="evd" maxlength="500" placeholder="Onde, o que levar\u2026" autocomplete="off">
+    <button class="btn" data-act="evtSend">Criar evento</button>`),
+      200,
+    );
+  });
+  b("evtSend", async () => {
+    let t = y("#evt").value.trim(),
+      e = new Date(y("#evq").value).getTime(),
+      a = y("#evd").value.trim();
+    if (!t) return y("#evt").focus();
+    if (!Number.isFinite(e)) return _("Escolha a data e a hora");
+    F();
+    try {
+      await h.engine.sendEvent(C.key, t, e, a);
+    } catch (n) {
+      _(n.message || "N\xE3o foi poss\xEDvel criar o evento.");
+    }
+  });
+  /** Lembrete 15 min antes, para quem não respondeu "não vou". Uma vez por evento. */
+  async function jmEventReminders() {
+    let t = h.engine;
+    if (!t || !t.me) return;
+    let e = new Set(await t.kv("evtAvisados", [])),
+      a = Date.now(),
+      n = !1;
+    for (let s of await t.db.all("msgs")) {
+      if (s.kind !== "event" || !s.evt || e.has(s.id)) continue;
+      let o = s.evt.at - a;
+      if (o > 9e5 || o < -6e4 || (s.rsvp || {})[t.pk] === "n") continue;
+      e.add(s.id), (n = !0);
+      let r = Math.max(0, Math.round(o / 6e4));
+      t.settings.notifications &&
+        X.notify({ tag: "evt:" + s.id, chat: s.chat, title: "\u{1F4C5} " + s.evt.ti, body: r <= 1 ? "Come\xE7a agora." : `Come\xE7a em ${r} minutos.`, silent: !t.settings.sounds, vibrate: !!t.settings.vibrate });
+    }
+    n && (await t.setKv("evtAvisados", [...e].slice(-300)));
+  }
+  // ---- Responder e marcar como lida pela notificação ----
+  async function jmNotifAct(t, e) {
+    // Pode chegar com a página acabando de abrir (sem tela): espera o motor.
+    for (let a = 0; a < 60 && !(h.engine && h.engine.pool && h.engine.me); a++) await new Promise((n) => setTimeout(n, 250));
+    let a = h.engine;
+    if (!a || typeof t != "string" || a.hasPin) return;
+    try {
+      e && e.trim() && (await a.sendText(t, e.trim())), await a.markRead(t), X.cancelNotify(t), Ae();
+    } catch {}
+  }
+  // ---- Arquivos, encaminhar, visualização única e prévia de links ----
+  var jmLpWait = new Map(),
+    jmLpSeq = 0;
+  /** Prévia feita pelo lado Android (o site só vê este aparelho). Até 7 s. */
+  function jmLinkPreview(t) {
+    return new Promise((e) => {
+      let a = "lp" + ++jmLpSeq;
+      jmLpWait.set(a, (n) => e(jmCleanLp(n))),
+        setTimeout(() => jmLpWait.has(a) && (jmLpWait.delete(a), e(null)), 7e3),
+        X.linkPreview(a, t);
+    });
+  }
+  function jmLpHtml(t) {
+    let e = (t.u.split("://")[1] || "").split("/")[0].replace(/^www\./, "");
+    return `<div class="lpcard" data-act="openUrl" data-u="${M(t.u)}">${t.i ? `<img src="${t.i}" alt="">` : ""}<div><small>${M(e)}</small><b>${M(t.t)}</b>${t.d ? `<span>${M(t.d)}</span>` : ""}</div></div>`;
+  }
+  var jmBytes = (t) => (t < 1024 ? t + " B" : t < 1048576 ? (t / 1024).toFixed(0) + " KB" : (t / 1048576).toFixed(1) + " MB");
+  function jmFileHtml(t) {
+    let e = t.media,
+      a = e.name || "arquivo",
+      n = ((a.match(/\.([a-z0-9]{1,5})$/i) || [])[1] || "ARQ").toUpperCase();
+    return `<div class="filetile"><span class="fext">${M(n)}</span><div class="fmeta"><b>${M(a)}</b><small>${jmBytes(e.size || 0)}${e.ready ? "" : ` \xB7 recebendo ${e.got || 0}/${e.n}`}</small></div>${e.ready ? `<button class="ibtn sm" data-act="fileSave" data-mid="${e.mid}" data-n="${M(a)}" aria-label="Salvar">${x("download", "sm")}</button>` : '<span class="spin"></span>'}</div>`;
+  }
+  function jmVoHtml(t) {
+    let e = t.media,
+      a = e.type === "audio",
+      n = t.from === h.engine.pk,
+      s = e.opened ? (a ? "\xC1udio ouvido" : "Foto aberta") : a ? "\xC1udio" : "Foto",
+      o = e.opened ? "Visualiza\xE7\xE3o \xFAnica" + (n ? " \xB7 j\xE1 foi aberta" : "") : n ? "Visualiza\xE7\xE3o \xFAnica \xB7 ainda n\xE3o aberta" : e.ready ? "Visualiza\xE7\xE3o \xFAnica \xB7 toque para abrir" : "Visualiza\xE7\xE3o \xFAnica \xB7 chegando\u2026",
+      r = !e.opened && !n && e.ready;
+    return `<div class="votile ${e.opened ? "done" : ""}" ${r ? `data-act="voOpen" data-id="${t.id}"` : ""}><span class="vo1">1</span><div><b>${s}</b><small>${o}</small></div></div>`;
+  }
+  b("voOpen", async (t) => {
+    let e = C && C.key;
+    if (!e) return;
+    let a = C.msgs.find((o) => o.id === t.dataset.id),
+      n;
+    try {
+      n = await h.engine.openViewOnce(e, t.dataset.id);
+    } catch (o) {
+      return _(o.message);
+    }
+    if (a && a.media.type === "audio") return nu("vo:" + t.dataset.id, await n.arrayBuffer()), _("Tocando \u2014 este \xE1udio n\xE3o fica salvo");
+    let s = URL.createObjectURL(n),
+      r = y("#viewer");
+    (r.innerHTML = `<div class="vtop"><button class="ibtn" data-act="closeViewer" aria-label="Fechar">${x("back")}</button><span style="color:#fff;font-weight:600">Visualiza\xE7\xE3o \xFAnica</span></div><img src="${s}" alt="Foto">`),
+      (r.hidden = !1),
+      X.setSecure(!0),
+      (jmVoUrl = s);
+  });
+  var jmVoUrl = null;
+  b("pickFile", () => {
+    F(),
+      Kn("*/*").then(async (t) => {
+        if (!t || !C) return;
+        if (t.size > JM_FILE_MAX) return _("Arquivo grande demais: o limite \xE9 5 MB.");
+        let e = C.key,
+          a = JM_FILE_MIME.test(t.type || "") ? t.type : "application/octet-stream";
+        _("Enviando " + t.name + "\u2026");
+        try {
+          await h.engine.sendMedia(e, new Uint8Array(await t.arrayBuffer()), { type: "file", mime: a, name: t.name });
+        } catch (n) {
+          _(n.message || "N\xE3o foi poss\xEDvel enviar o arquivo.");
+        }
+      });
+  });
+  b("pickPhotoOnce", () => {
+    F(),
+      Kn("image/*").then(async (t) => {
+        if (!t || !C) return;
+        let e = C.key;
+        try {
+          let a = await xu(t);
+          await h.engine.sendMedia(e, a.bytes, { type: "image", mime: a.mime, w: a.w, h: a.h, vo: !0 }), _("Foto de visualiza\xE7\xE3o \xFAnica enviada");
+        } catch (a) {
+          _(a.message || "N\xE3o foi poss\xEDvel enviar a foto.");
+        }
+      });
+  });
+  b("fileSave", async (t) => {
+    F();
+    let e = await h.engine.mediaBlob(t.dataset.mid);
+    if (!e) return _("O arquivo ainda n\xE3o chegou inteiro.");
+    let a = new Uint8Array(await e.arrayBuffer()),
+      n = X.saveFile(t.dataset.n, Fa.enc(a));
+    if (n === void 0) {
+      let s = document.createElement("a");
+      (s.href = URL.createObjectURL(e)), (s.download = t.dataset.n), s.click(), setTimeout(() => URL.revokeObjectURL(s.href), 5e3), _("Arquivo salvo");
+    } else _(n ? "Salvo em " + n : "N\xE3o foi poss\xEDvel salvar o arquivo.", 3500);
+  });
+  b("fwdOpen", (t) => {
+    F();
+    let e = t.dataset.id,
+      a = h.engine,
+      n = [...a.chats.values()]
+        .filter((s) => s.kind === "group" ? a.groups.has(s.lid) : (a.contacts.get(s.pk) || {}).status === "ok")
+        .sort((s, o) => (o.lastTs || 0) - (s.lastTs || 0))
+        .slice(0, 60);
+    setTimeout(
+      () =>
+        ee(`<h2 class="sh-title">Encaminhar para\u2026</h2><div class="mlist">${n
+          .map((s) => {
+            let o = s.kind === "group" ? (a.groups.get(s.lid).meta.channels.find((r) => r.id === s.ch) || {}).name : ne(s.pk),
+              r = s.kind === "group" ? a.groups.get(s.lid).meta.name : "";
+            return `<button class="mitem" data-act="fwdTo" data-id="${e}" data-k="${s.key}">${x(s.kind === "group" ? "hash" : "user")}<span>${M(o || "")}${r ? `<small>${M(r)}</small>` : ""}</span></button>`;
+          })
+          .join("") || '<p class="sh-sub">Nenhuma conversa.</p>'}</div>`),
+      200,
+    );
+  });
+  b("fwdTo", async (t) => {
+    F();
+    try {
+      await h.engine.forward(t.dataset.id, t.dataset.k), _("Encaminhada");
+    } catch (e) {
+      _(e.message || "N\xE3o foi poss\xEDvel encaminhar.");
+    }
+  });
+  // Mais opções da mensagem
+  function jmCanPin() {
+    if (!C) return !1;
+    if (C.chat.kind === "dm") return !0;
+    let t = h.engine.groups.get(C.chat.lid);
+    return !!t && jmCan(t.meta, h.engine.pk, "pin");
+  }
+  b("msgMore", () => {
+    let t = C.msgs.find((o) => o.id === C.pop);
+    if (($t(), !t)) return;
+    let e = h.engine,
+      a = t.from === e.pk && t.kind === "text",
+      n = jmCanPin() && t.kind !== "deleted",
+      s = (e.chatFor(C.key).pins || []).includes(t.id);
+    ee(`<div class="mlist">
+    ${a ? `<button class="mitem" data-act="editStart" data-id="${t.id}">${x("edit")}Editar</button>` : ""}
+    ${n ? `<button class="mitem" data-act="pinMsg" data-id="${t.id}" data-on="${s ? 0 : 1}">${x("pin")}${s ? "Desafixar" : "Fixar na conversa"}</button>` : ""}
+    ${t.kind === "poll" ? `<button class="mitem" data-act="pollWho" data-id="${t.id}">${x("users")}Ver quem votou</button>` : ""}
+    ${t.kind === "text" || t.kind === "sound" || (t.kind === "media" && !t.media.vo && t.media.ready) ? `<button class="mitem" data-act="fwdOpen" data-id="${t.id}">${x("share")}Encaminhar</button>` : ""}
+    ${t.kind === "media" && t.media.type === "file" && t.media.ready ? `<button class="mitem" data-act="fileSave" data-mid="${t.media.mid}" data-n="${M(t.media.name || "arquivo")}">${x("download")}Salvar arquivo</button>` : ""}
+    <button class="mitem danger" data-act="delMsgId" data-id="${t.id}">${x("trash")}Apagar</button></div>`);
+  });
+  b("delMsgId", (t) => {
+    F();
+    let e = t.dataset.id;
+    setTimeout(() => {
+      C && ((C.pop = e), vt.delMsg());
+    }, 260);
+  });
+  b("editStart", (t) => {
+    F();
+    let e = C.msgs.find((n) => n.id === t.dataset.id);
+    if (!e) return;
+    (C.edit = { id: e.id }), (C.reply = null);
+    y("#replyslot", C.el).innerHTML = `<div class="replybar edit"><div><b>${x("edit", "xs")} Editando mensagem</b>${M(e.text).slice(0, 140)}</div><button class="ibtn sm" data-act="cancelEdit" aria-label="Cancelar edi\xE7\xE3o">${x("x")}</button></div>`;
+    let a = y("#msgin", C.el);
+    a && ((a.value = e.text), vo(a), wo(), setTimeout(() => a.focus(), 280));
+  });
+  function jmEditCancel() {
+    C && ((C.edit = null), (y("#replyslot", C.el).innerHTML = ""));
+  }
+  b("pinMsg", async (t) => {
+    F();
+    let e = t.dataset.on === "1";
+    await h.engine.setPin(C.key, t.dataset.id, e), _(e ? "Mensagem fixada" : "Mensagem desafixada");
+  });
+  async function jmPinBar() {
+    if (!C) return;
+    let t = y("#pinbar", C.el);
+    if (!t) return;
+    let e = h.engine,
+      a = e.chatFor(C.key).pins || [],
+      n = null;
+    for (let s of a) {
+      let o = C.msgs.find((r) => r.id === s) || (await e.db.get("msgs", s));
+      if (o && o.chat === C.key && o.kind !== "deleted") {
+        n = o;
+        break;
+      }
+    }
+    t.innerHTML = n
+      ? `<button class="pinbar" data-act="pinJump" data-id="${n.id}">${x("pin", "sm")}<span><b>Mensagem fixada${a.length > 1 ? ` \xB7 ${a.length}` : ""}</b>${M(e.preview(n)).slice(0, 120)}</span>${a.length > 1 ? `<i data-act="pinsOpen">Ver todas</i>` : ""}</button>`
+      : "";
+  }
+  b("pinJump", (t, e) => {
+    e && e.target.closest('[data-act="pinsOpen"]') ? vt.pinsOpen() : jmJump(t.dataset.id);
+  });
+  b("pinsOpen", async () => {
+    F();
+    let t = h.engine,
+      e = t.chatFor(C.key).pins || [],
+      a = [];
+    for (let s of e) {
+      let o = await t.db.get("msgs", s);
+      o && o.chat === C.key && o.kind !== "deleted" && a.push(o);
+    }
+    let n = jmCanPin();
+    setTimeout(
+      () =>
+        ee(`<h2 class="sh-title">Mensagens fixadas</h2>${a.length ? `<div class="mlist">${a
+          .map(
+            (s) => `<div class="pinrow"><button class="mitem" data-act="pinGo" data-id="${s.id}"><span><b>${M(s.from === t.pk ? "Voc\xEA" : ne(s.from))}</b><small>${M(t.preview(s)).slice(0, 160)}</small></span></button>${n ? `<button class="ibtn sm" data-act="pinMsg" data-id="${s.id}" data-on="0" aria-label="Desafixar">${x("x")}</button>` : ""}</div>`,
+          )
+          .join("")}</div>` : `<p class="sh-sub">Nenhuma mensagem fixada. Toque numa mensagem, depois em ${x("more", "xs")} e em “Fixar na conversa”.</p>`}`),
+      200,
+    );
+  });
+  b("pinGo", (t) => {
+    F(), jmJump(t.dataset.id);
+  });
+  async function jmJump(t) {
+    if (!C) return;
+    if (!C.msgs.some((a) => a.id === t)) {
+      let a = await h.engine.messages(C.key, 1 / 0, 3e3);
+      if (!a.some((n) => n.id === t)) return _("Essa mensagem n\xE3o est\xE1 mais neste aparelho");
+      (C.msgs = a), (C.more = a.length >= 3e3), Zt({ keep: !0 });
+    }
+    setTimeout(() => vt.jumpTo({ dataset: { id: t } }), 60);
+  }
+  // Buscar na conversa
+  var jmNorm = (t) => String(t || "").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
+  b("chatSearch", async () => {
+    F();
+    let t = await h.engine.messages(C.key, 1 / 0, 5e3);
+    (C.searchAll = t.filter((e) => e.kind === "text" || e.kind === "poll")),
+      setTimeout(() => {
+        ee(`<h2 class="sh-title">Buscar na conversa</h2><input class="inp" id="srchin" placeholder="Digite uma palavra" autocomplete="off" enterkeyhint="search"><div id="srchres" class="srchres"><p class="sh-sub">${C.searchAll.length} mensagens de texto neste aparelho.</p></div>`);
+        setTimeout(() => {
+          let e = y("#srchin");
+          e && e.focus();
+        }, 380);
+      }, 200);
+  });
+  document.addEventListener("input", (t) => {
+    if (t.target.id !== "srchin" || !C) return;
+    let e = jmNorm(t.target.value.trim()),
+      a = y("#srchres");
+    if (!a) return;
+    if (e.length < 2) return void (a.innerHTML = '<p class="sh-sub">Digite pelo menos 2 letras.</p>');
+    let n = (C.searchAll || []).filter((s) => jmNorm(s.text || (s.poll && s.poll.q)).includes(e)).reverse().slice(0, 60);
+    a.innerHTML = n.length
+      ? n
+          .map((s) => {
+            let o = s.text || s.poll.q,
+              r = jmNorm(o).indexOf(e),
+              i = Math.max(0, r - 30),
+              c = (i ? "…" : "") + o.slice(i, r) + "\u0001" + o.slice(r, r + e.length) + "\u0002" + o.slice(r + e.length, r + e.length + 80);
+            return `<button class="srchrow" data-act="pinGo" data-id="${s.id}"><b>${M(s.from === h.engine.pk ? "Voc\xEA" : ne(s.from))} <small>${M(_d(s.ts))} ${so(s.ts)}</small></b><span>${M(c).replace("\u0001", "<mark>").replace("\u0002", "</mark>")}</span></button>`;
+          })
+          .join("")
+      : '<p class="sh-sub">Nada encontrado.</p>';
+  });
+  // Enquetes
+  function jmPollHtml(t) {
+    let e = h.engine,
+      a = t.poll || { q: "", o: [] },
+      n = t.votes || {},
+      s = Object.keys(n).length,
+      o = a.o.map(() => 0);
+    for (let i of Object.values(n)) for (let c of i) o[c] != null && o[c]++;
+    let r = n[e.pk] || [];
+    return `<div class="poll"><div class="pq">${x("checks", "xs")} ${M(a.q)}</div><small class="pm">${a.m ? "Escolha uma ou mais op\xE7\xF5es" : "Escolha uma op\xE7\xE3o"}</small>
+    ${a.o
+      .map((i, c) => {
+        let l = s ? Math.round((o[c] * 100) / s) : 0,
+          u = r.includes(c);
+        return `<button class="popt ${u ? "on" : ""}" data-act="pollVote" data-id="${t.id}" data-i="${c}"><i class="pbar" style="width:${l}%"></i><span class="pck">${u ? x("check", "xs") : ""}</span><span class="ptx">${M(i)}</span><span class="pn">${o[c]}</span></button>`;
+      })
+      .join("")}<button class="pfoot" data-act="pollWho" data-id="${t.id}">${s} ${s === 1 ? "voto" : "votos"} \xB7 ver quem votou</button></div>`;
+  }
+  b("pollVote", async (t) => {
+    let e = C.msgs.find((o) => o.id === t.dataset.id);
+    if (!e) return;
+    let a = +t.dataset.i,
+      n = (e.votes || {})[h.engine.pk] || [],
+      s = e.poll.m ? (n.includes(a) ? n.filter((o) => o !== a) : [...n, a].sort()) : n.includes(a) ? [] : [a];
+    X.vibrate(10), await h.engine.vote(C.key, e.id, s);
+  });
+  b("pollWho", async (t) => {
+    F();
+    let e = C.msgs.find((n) => n.id === t.dataset.id) || (await h.engine.db.get("msgs", t.dataset.id));
+    if (!e) return;
+    let a = e.votes || {};
+    setTimeout(
+      () =>
+        ee(`<h2 class="sh-title">${M(e.poll.q)}</h2>${e.poll.o
+          .map((n, s) => {
+            let o = Object.entries(a).filter(([, r]) => r.includes(s)).map(([r]) => r);
+            return `<div class="label" style="padding-left:0">${M(n)} \xB7 ${o.length}</div>${o.length ? o.map((r) => `<div class="voter">${pe(r, 28, { badge: !1 })}<span>${M(r === h.engine.pk ? "Voc\xEA" : ne(r))}</span></div>`).join("") : '<p class="sh-sub">Ningu\xE9m ainda</p>'}`;
+          })
+          .join("")}`),
+      200,
+    );
+  });
+  b("pollNew", () => {
+    F(),
+      setTimeout(
+        () =>
+          ee(`<h2 class="sh-title">Nova enquete</h2>
+    <label class="lbl" for="pq">Pergunta</label><input class="inp" id="pq" maxlength="200" placeholder="Ex.: Que dia fica melhor?" autocomplete="off">
+    <span class="lbl">Op\xE7\xF5es</span><div id="popts"><input class="inp popin" maxlength="80" placeholder="Op\xE7\xE3o 1" autocomplete="off"><input class="inp popin" maxlength="80" placeholder="Op\xE7\xE3o 2" autocomplete="off"></div>
+    <button class="btn ghost" data-act="pollAddOpt" style="margin-top:6px">${x("plus", "sm")}&nbsp;Adicionar op\xE7\xE3o</button>
+    <label class="pick" style="padding:12px 2px"><span style="flex:1">Permitir mais de uma resposta</span><input type="checkbox" id="pmulti"></label>
+    <div class="errtx" id="perr" hidden>Escreva a pergunta e pelo menos duas op\xE7\xF5es.</div>
+    <button class="btn" data-act="pollSend">Enviar enquete</button>`),
+        200,
+      );
+  });
+  b("pollAddOpt", () => {
+    let t = y("#popts"),
+      e = oe(".popin", t).length;
+    if (e >= 10) return _("No m\xE1ximo 10 op\xE7\xF5es");
+    t.insertAdjacentHTML("beforeend", `<input class="inp popin" maxlength="80" placeholder="Op\xE7\xE3o ${e + 1}" autocomplete="off">`), t.lastElementChild.focus();
+  });
+  b("pollSend", async () => {
+    let t = y("#pq").value.trim(),
+      e = oe(".popin").map((a) => a.value.trim()).filter(Boolean);
+    if (!t || e.length < 2) return void (y("#perr").hidden = !1);
+    F();
+    try {
+      await h.engine.sendPoll(C.key, t, e, y("#pmulti") && y("#pmulti").checked);
+    } catch (a) {
+      _(a.message || "N\xE3o foi poss\xEDvel enviar a enquete.");
+    }
+  });
+  // Online / ausente
+  function jmPresTick(t = !1) {
+    let e = h.engine;
+    e && e.pool && e.setPresence(document.hidden ? "away" : "on", t).catch(() => {});
+  }
+  document.addEventListener("visibilitychange", () => jmPresTick(!0));
+  // Cargos do grupo
+  function jmRolesSheet() {
+    let t = h.engine.groups.get(se.lid);
+    if (!t) return;
+    let e = cn(t, h.engine.pk),
+      a = t.meta.roles || [];
+    ee(`<h2 class="sh-title">Cargos</h2><p class="sh-sub">Cargos d\xE3o nome e cor \xE0s pessoas do grupo. ${e ? "Toque num cargo para editar; para dar um cargo, toque na pessoa em Membros." : "S\xF3 admins criam e d\xE3o cargos."}</p>
+    <div class="mlist">${a.length ? a.map((n) => {
+      let s = Object.values(t.meta.mroles || {}).filter((o) => o.includes(n.id)).length;
+      return `<button class="mitem" ${e ? `data-act="roleEdit" data-id="${n.id}"` : ""}><i class="rdot" style="background:${JM_ROLE_CORES[n.c]}"></i><span>${M(n.n)}<small>${s} ${s === 1 ? "pessoa" : "pessoas"}</small></span></button>`;
+    }).join("") : '<p class="sh-sub">Nenhum cargo ainda.</p>'}</div>
+    ${e && a.length < 12 ? `<button class="btn" data-act="roleEdit" data-id="">${x("plus", "sm")}&nbsp;Novo cargo</button>` : ""}`);
+  }
+  b("rolesOpen", () => jmRolesSheet());
+  var jmRoleCor = 0;
+  b("roleEdit", (t) => {
+    let e = h.engine.groups.get(se.lid),
+      a = (e.meta.roles || []).find((n) => n.id === t.dataset.id);
+    (jmRoleCor = a ? a.c : (e.meta.roles || []).length % 8),
+      F(),
+      setTimeout(
+        () =>
+          ee(`<h2 class="sh-title">${a ? "Editar cargo" : "Novo cargo"}</h2>
+    <label class="lbl" for="rname">Nome</label><input class="inp" id="rname" maxlength="24" placeholder="Ex.: Moderador" value="${a ? M(a.n) : ""}" autocomplete="off">
+    <span class="lbl">Cor</span><div class="swatches">${JM_ROLE_CORES.map((n, s) => `<button class="swatch ${s === jmRoleCor ? "on" : ""}" data-act="roleColor" data-c="${s}" style="background:${n}" aria-label="Cor ${s + 1}"></button>`).join("")}</div>
+    <span class="lbl">Poderes</span>${JM_PERMS.map(([n, s]) => `<label class="pick" style="padding:8px 2px"><span style="flex:1">${s}</span><input type="checkbox" class="rperm" value="${n}" ${a && (a.p || []).includes(n) ? "checked" : ""}></label>`).join("")}
+    <p class="note" style="padding:4px 2px 10px">Mudar canais, membros e cargos continua s\xF3 com admins.</p>
+    <button class="btn" data-act="roleSave" data-id="${a ? a.id : ""}">Salvar</button>
+    ${a ? `<button class="btn ghost danger" data-act="roleDel" data-id="${a.id}">Apagar cargo</button>` : ""}`),
+        200,
+      );
+  });
+  b("roleColor", (t) => {
+    (jmRoleCor = +t.dataset.c), oe(".swatch").forEach((e) => e.classList.toggle("on", e === t));
+  });
+  b("roleSave", async (t) => {
+    let e = y("#rname").value.trim();
+    if (!e) return y("#rname").focus();
+    let a = t.dataset.id;
+    let jmP = oe(".rperm").filter((n) => n.checked).map((n) => n.value);
+    F();
+    await h.engine.editGroup(se.lid, a ? { editRole: { id: a, n: e, c: jmRoleCor, p: jmP } } : { addRole: { n: e, c: jmRoleCor, p: jmP } }), Be(), _(a ? "Cargo salvo" : "Cargo criado");
+  });
+  b("roleDel", async (t) => {
+    F(), await h.engine.editGroup(se.lid, { removeRole: t.dataset.id }), Be(), _("Cargo apagado");
+  });
+  b("memberRoles", (t) => {
+    let e = h.engine.groups.get(se.lid),
+      a = t.dataset.pk,
+      n = e.meta.roles || [];
+    F(),
+      setTimeout(
+        () =>
+          ee(`<h2 class="sh-title">Cargos de ${M(ne(a))}</h2>${n.length ? `<div class="rolechips">${n.map((s) => `<button class="rchip ${jmRolesOf(e, a).includes(s) ? "on" : ""}" data-act="roleToggle" data-pk="${a}" data-id="${s.id}" style="--rc:${JM_ROLE_CORES[s.c]}"><i></i>${M(s.n)}</button>`).join("")}</div><p class="note">At\xE9 4 cargos por pessoa.</p>` : `<p class="sh-sub">O grupo ainda n\xE3o tem cargos.</p><button class="btn" data-act="roleEdit" data-id="">Criar cargo</button>`}`),
+        200,
+      );
+  });
+  b("roleToggle", async (t) => {
+    let e = h.engine.groups.get(se.lid),
+      a = t.dataset.pk,
+      n = !jmRolesOf(e, a).some((s) => s.id === t.dataset.id);
+    if (n && jmRolesOf(e, a).length >= 4) return _("No m\xE1ximo 4 cargos por pessoa");
+    t.classList.toggle("on", n), await h.engine.editGroup(se.lid, { memberRole: { pk: a, id: t.dataset.id, on: n } }), Be();
+  });
   b("msgTap", (t, e) => {
     (e.target.closest("[data-act]:not(.msg)") &&
       e.target.closest("[data-act]") !== t) ||
@@ -16840,6 +18124,10 @@ zoo`.split(`
   b("cancelReply", () => {
     (C.reply = null), (y("#replyslot", C.el).innerHTML = "");
   });
+  b("cancelEdit", () => {
+    let t = y("#msgin", C.el);
+    t && ((t.value = ""), vo(t), wo()), jmEditCancel();
+  });
   b("copyMsg", async () => {
     let t = C.msgs.find((e) => e.id === C.pop);
     $t(),
@@ -16850,10 +18138,8 @@ zoo`.split(`
   b("delMsg", () => {
     let t = C.msgs.find((a) => a.id === C.pop);
     if (($t(), !t)) return;
-    let e =
-      t.from === h.engine.pk &&
-      t.kind !== "deleted" &&
-      Date.now() - t.ts < 48 * 36e5;
+    let jmG = C.chat.kind === "group" && h.engine.groups.get(C.chat.lid),
+      e = (t.from === h.engine.pk && Date.now() - t.ts < 48 * 36e5 || (!!jmG && jmCan(jmG.meta, h.engine.pk, "del"))) && t.kind !== "deleted";
     ee(`<h2 class="sh-title">Apagar mensagem?</h2><div class="mlist">
     ${e ? `<button class="mitem danger" data-act="delAll" data-id="${t.id}">${x("trash")}<span>Apagar para todos<small>Some tamb\xE9m no aparelho de quem recebeu</small></span></button>` : ""}
     <button class="mitem" data-act="delMe" data-id="${t.id}">${x("trash")}<span>Apagar s\xF3 para mim</span></button></div>`);
@@ -16886,7 +18172,11 @@ zoo`.split(`
   <button class="atile" data-act="cameraPhoto"><span class="ab">${x("camera")}</span>C\xE2mera</button>
   <button class="atile hot" data-act="attachSound"><span class="ab">${x("wave")}</span>Som</button>
   <button class="atile" data-act="attachVoice"><span class="ab">${x("mic")}</span>\xC1udio</button>
-  <button class="atile" data-act="gifSheet"><span class="ab">${x("gif")}</span>GIF</button></div>
+  <button class="atile" data-act="gifSheet"><span class="ab">${x("gif")}</span>GIF</button>
+  <button class="atile" data-act="pollNew"><span class="ab">${x("checks")}</span>Enquete</button>
+  <button class="atile" data-act="pickFile"><span class="ab">${x("file")}</span>Arquivo</button>
+  <button class="atile" data-act="evtNew"><span class="ab">${x("clock")}</span>Evento</button>
+  <button class="atile" data-act="pickPhotoOnce"><span class="ab">${x("eye")}</span>Foto \xFAnica</button></div>
   <p class="note" style="padding:14px 2px 0">Fotos s\xE3o reduzidas e os metadados (como localiza\xE7\xE3o) s\xE3o removidos antes de sair do aparelho.</p>`),
   );
   b("attachVoice", () => {
@@ -16944,6 +18234,7 @@ zoo`.split(`
       (a.hidden = !1);
   });
   b("closeViewer", () => {
+    jmVoUrl && (URL.revokeObjectURL(jmVoUrl), (jmVoUrl = null), X.setSecure(!!h.engine.settings.lockScreenshots));
     (y("#viewer").hidden = !0), (y("#viewer").innerHTML = "");
   });
   b("attachSound", () => P.soundSheet("chat"));
@@ -17083,6 +18374,8 @@ zoo`.split(`
       e = t.chatFor(C.key);
     e.kind === "dm"
       ? ee(`<div class="mlist">
+      <button class="mitem" data-act="chatSearch">${x("search")}Buscar na conversa</button>
+      <button class="mitem" data-act="pinsOpen">${x("pin")}Mensagens fixadas</button>
       <button class="mitem" data-act="openProfileCur">${x("user")}Ver perfil e c\xF3digo de seguran\xE7a</button>
       <button class="mitem" data-act="ttlSheet">${x("timer")}<span>Mensagens tempor\xE1rias<small>${M(yt(e.ttl))}</small></span></button>
       <button class="mitem" data-act="toggleMute">${x(e.muted ? "bell" : "belloff")}${e.muted ? "Ativar notifica\xE7\xF5es" : "Silenciar"}</button>
@@ -17090,6 +18383,8 @@ zoo`.split(`
       <button class="mitem" data-act="clearChat">${x("trash")}Limpar conversa</button>
       <button class="mitem danger" data-act="blockCur">${x("ban")}Bloquear</button></div>`)
       : ee(`<div class="mlist">
+      <button class="mitem" data-act="chatSearch">${x("search")}Buscar no canal</button>
+      <button class="mitem" data-act="pinsOpen">${x("pin")}Mensagens fixadas</button>
       <button class="mitem" data-act="chatToGroupS">${x("users")}Canais e membros</button>
       <button class="mitem" data-act="toggleMute">${x(e.muted ? "bell" : "belloff")}${e.muted ? "Ativar notifica\xE7\xF5es do canal" : "Silenciar canal"}</button>
       <button class="mitem" data-act="clearChat">${x("trash")}Limpar canal neste aparelho</button></div>`);
@@ -17539,6 +18834,7 @@ No app: Adicionar contato \u2192 cole este c\xF3digo.`;
         <div class="pills">
           <button class="pbt" data-act="groupInvite">${x("userplus", "sm")}Convidar</button>
           <button class="pbt ${t.mute ? "on" : ""}" data-act="groupMute">${x(t.mute ? "belloff" : "bell", "sm")}${t.mute ? "Silenciado" : "Silenciar"}</button>
+          ${s || (t.meta.roles || []).length ? `<button class="pbt" data-act="rolesOpen">${x("sparkle", "sm")}Cargos</button>` : ""}
         </div></div>
       <div class="seg ${se.tab === "membros" ? "m1" : ""}" role="tablist"><i class="ind"></i><button class="${se.tab === "canais" ? "on" : ""}" data-act="gtab" data-t="canais">Canais</button><button class="${se.tab === "membros" ? "on" : ""}" data-act="gtab" data-t="membros">Membros</button></div>
       <div id="gbody">${se.tab === "canais" ? L0(t) : T0(t)}</div><div style="height:28px"></div></div>`;
@@ -17600,8 +18896,12 @@ No app: Adicionar contato \u2192 cole este c\xF3digo.`;
     let e = h.engine,
       a = (s) =>
         s === t.meta.owner ? 0 : (t.meta.admins || []).includes(s) ? 1 : 2,
+      jr = (s) => {
+        let o = jmRolesOf(t, s)[0];
+        return o ? (t.meta.roles || []).indexOf(o) : 99;
+      },
       n = [...t.meta.members].sort(
-        (s, o) => a(s) - a(o) || ne(s).localeCompare(ne(o)),
+        (s, o) => a(s) - a(o) || jr(s) - jr(o) || ne(s).localeCompare(ne(o)),
       );
     return (
       `<div class="label">${n.length} ${n.length === 1 ? "membro" : "membros"}</div>` +
@@ -17614,7 +18914,8 @@ No app: Adicionar contato \u2192 cole este c\xF3digo.`;
                   ? "Admin"
                   : "",
             r = e.contacts.get(s);
-          return `<div class="mrow2" role="button" tabindex="0" data-act="memberMenu" data-pk="${s}" style="cursor:pointer">${pe(s, 44)}<div><div class="nmx"><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${M(ne(s))}</span>${o ? `<span class="rolepill">${o}</span>` : ""}</div>
+          let rr = jmRolesOf(t, s);
+          return `<div class="mrow2" role="button" tabindex="0" data-act="memberMenu" data-pk="${s}" style="cursor:pointer">${pe(s, 44)}<div><div class="nmx"><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;${rr[0] ? `color:${JM_ROLE_CORES[rr[0].c]}` : ""}">${M(ne(s))}</span>${o ? `<span class="rolepill">${o}</span>` : ""}${rr.map((q) => `<span class="rolepill cust" style="--rc:${JM_ROLE_CORES[q.c]}">${M(q.n)}</span>`).join("")}</div>
       <small>${s === e.pk ? "Voc\xEA" : r && r.status === "ok" ? "Nos seus contatos" : "Membro do grupo"}</small></div></div>`;
         })
         .join("") +
@@ -17734,6 +19035,7 @@ No app: Adicionar contato \u2192 cole este c\xF3digo.`;
       o = e.contacts.get(n);
     ee(`<div class="cinfo">${pe(n, 72)}<h3>${M(ne(n))}</h3></div><div class="mlist">
     <button class="mitem" data-act="memberMsg" data-pk="${n}">${x("chat")}${o && o.status === "ok" ? "Mandar mensagem" : "Adicionar e mandar mensagem"}</button>
+    ${cn(a, e.pk) ? `<button class="mitem" data-act="memberRoles" data-pk="${n}">${x("sparkle")}<span>Cargos<small>${M(jmRolesOf(a, n).map((q) => q.n).join(", ") || "Nenhum cargo")}</small></span></button>` : ""}
     ${
       s
         ? `<button class="mitem" data-act="memberAdmin" data-pk="${n}">${x("shield")}${(a.meta.admins || []).includes(n) ? "Remover admin" : "Tornar admin"}</button>
@@ -18259,9 +19561,11 @@ No app: Adicionar contato \u2192 cole este c\xF3digo.`;
         t.mic ? "mic" : "micoff",
         t.mic ? "Microfone" : "Mudo",
       ) +
-      e("cCam", t.cam, t.cam ? "video" : "videooff", "C\xE2mera") +
+      e("cCam", t.cam && !t.scr, t.cam && !t.scr ? "video" : "videooff", "C\xE2mera") +
+      (X.available ? e("cScreen", !!t.scr, "share", t.scr ? "Parar" : "Tela") : "") +
       `<button class="cbtn sbtn" data-act="cSounds"><span class="cc">${x("wave")}</span>Sons</button>` +
-      (t.cam
+      (t === H && H ? `<button class="cbtn" data-act="peerVol" data-pk="${H.pk}"><span class="cc">${x("volume")}</span>Volume</button>` : "") +
+      (t.cam && !t.scr
         ? e("cFlip", !1, "flip", "Virar")
         : e("cSpk", t.spk, "volume", "Alto-falante"))
     );
@@ -18290,6 +19594,7 @@ No app: Adicionar contato \u2192 cole este c\xF3digo.`;
         H.peer &&
         t.srcObject !== H.peer.remote &&
         ((t.srcObject = H.peer.remote),
+        (t.volume = jmVolOf(H.pk)),
         t.play().catch(() => {}),
         (t.onresize = () => {
           // Vídeo deitado (tela do computador) aparece inteiro; câmera em pé preenche.
@@ -18638,6 +19943,7 @@ No app: Adicionar contato \u2192 cole este c\xF3digo.`;
   }
   function Ge(t) {
     if (!H) return;
+    H.scr && (X.screenStop(), jmScr && ((jmScr.on = !1), jmScr.track.stop(), (jmScr = null)));
     let e = H;
     if (
       ((H = null),
@@ -18762,7 +20068,55 @@ No app: Adicionar contato \u2192 cole este c\xF3digo.`;
     let e = y("#ctrls");
     e && (e.innerHTML = Co(t)), z && at();
   });
-  b("cCam", () => _0());
+  b("cCam", () => {
+    let t = H || z;
+    t && t.scr ? jmScreenOff().then(() => _0()) : _0();
+  });
+  // ---- Transmitir a tela do celular: o Android captura, a página desenha num
+  // canvas e o canvas vira a trilha de vídeo (como a câmera).
+  var jmScr = null;
+  b("cScreen", () => {
+    let t = H || z;
+    t && (t.scr ? (X.screenStop(), jmScreenOff()) : (_("Escolha \u201CCome\xE7ar agora\u201D para transmitir"), X.screenStart()));
+  });
+  async function jmScreenOn() {
+    let t = H || z;
+    if (!t) return X.screenStop();
+    let e = document.createElement("canvas");
+    (e.width = 720), (e.height = 1280);
+    let a = e.getContext("2d"),
+      n = e.captureStream(15).getVideoTracks()[0],
+      s = { on: !0, track: n };
+    (jmScr = s),
+      (async () => {
+        for (; s.on; ) {
+          try {
+            let o = await fetch("/__screen.jpg?" + Date.now(), { cache: "no-store" });
+            if (o.ok) {
+              let r = await createImageBitmap(await o.blob());
+              (e.width !== r.width || e.height !== r.height) && ((e.width = r.width), (e.height = r.height)), a.drawImage(r, 0, 0), r.close();
+            }
+          } catch {}
+          await new Promise((o) => setTimeout(o, 70));
+        }
+      })(),
+      t.stream.getVideoTracks().forEach((o) => {
+        o.stop(), t.stream.removeTrack(o);
+      }),
+      t.stream.addTrack(n),
+      (t.cam = !0),
+      (t.scr = !0);
+    for (let o of as()) await o.setVideo(n), o.send({ t: "cam", on: !0 });
+    _("Transmitindo a sua tela"), H ? Sa() : at();
+  }
+  async function jmScreenOff() {
+    let t = H || z,
+      e = jmScr;
+    if (((jmScr = null), e && ((e.on = !1), e.track.stop()), !t || !t.scr)) return;
+    (t.scr = !1), (t.cam = !1), t.stream.getVideoTracks().forEach((a) => t.stream.removeTrack(a));
+    for (let a of as()) await a.setVideo(null), a.send({ t: "cam", on: !1 });
+    H ? Sa() : at();
+  }
   b("cFlip", () => O0());
   b("cSpk", () => {
     let t = H || z;
@@ -18929,6 +20283,7 @@ No app: Adicionar contato \u2192 cole este c\xF3digo.`;
   }
   function ss() {
     if (!z) return;
+    z.scr && (X.screenStop(), jmScr && ((jmScr.on = !1), jmScr.track.stop(), (jmScr = null)));
     let t = z;
     z = null;
     let e = h.engine;
@@ -18968,7 +20323,7 @@ No app: Adicionar contato \u2192 cole este c\xF3digo.`;
           (
             [c, l, u, d, f],
             p,
-          ) => `<div class="ptile" style="--i:${p}" data-sp="${c}">
+          ) => `<div class="ptile" style="--i:${p}" data-sp="${c}" ${c !== "me" ? `data-act="peerVol" data-pk="${l}"` : ""}>
       ${d ? `<video data-vid="${c}" autoplay playsinline ${c === "me" ? "muted" : ""}></video>` : pe(l, 64, { badge: !1 })}
       ${c !== "me" && f !== "connected" ? '<span class="pst">conectando\u2026</span>' : ""}
       <span class="pn">${u ? "" : x("micoff")}${c === "me" ? "Voc\xEA" : M(Ue(l))}</span>
@@ -18982,11 +20337,12 @@ No app: Adicionar contato \u2192 cole este c\xF3digo.`;
       let l = c.dataset.vid;
       (c.srcObject =
         l === "me" ? z.stream : (z.peers.get(l) || {}).peer.remote),
+        l !== "me" && (c.volume = jmVolOf(l)),
         c.play().catch(() => {});
     }
     for (let c of oe("audio[data-aud]", i)) {
       let l = z.peers.get(c.dataset.aud);
-      l && ((c.srcObject = l.peer.remote), c.play().catch(() => {}));
+      l && ((c.srcObject = l.peer.remote), (c.volume = jmVolOf(c.dataset.aud)), c.play().catch(() => {}));
     }
     So();
   }
@@ -19042,7 +20398,9 @@ No app: Adicionar contato \u2192 cole este c\xF3digo.`;
     ${e ? `<button class="reqhead" data-act="openRecovery" style="margin-top:12px">${x("key")}<b>Anote sua chave de recupera\xE7\xE3o</b>${x("chev", "sm")}</button>` : ""}
     <div class="label">Conta</div>
     ${le({ i: "qr", n: "Meu c\xF3digo", s: "QR e c\xF3digo para algu\xE9m te adicionar", act: "myCode" })}
+    ${le({ i: "smile", n: "Status", s: (() => { let jmS = jmCleanStatus(h.engine.me.st); return jmS ? M(((jmS.e || "") + " " + (jmS.t || "")).trim() || "") + (jmS.dnd ? " \xB7 N\xE3o perturbe" : "") : "Mostre o que voc\xEA est\xE1 fazendo"; })(), act: "statusOpen" })}
     ${le({ i: "key", n: "Chave de recupera\xE7\xE3o", s: "As 12 palavras que recuperam sua conta", act: "openRecovery" })}
+    ${le({ i: "link", n: "Aparelhos conectados", s: "Onde esta conta est\xE1 aberta", act: "devicesOpen" })}
     <div class="label">Privacidade e avisos</div>
     ${le({ i: "shield", n: "Privacidade e seguran\xE7a", s: "PIN, capturas de tela, recibos, bloqueados", act: "openPrivacy" })}
     ${le({ i: "bell", n: "Notifica\xE7\xF5es", s: t.settings.notifications ? "Ativadas" + (t.settings.background ? " \xB7 conectado em segundo plano" : "") : "Desativadas", act: "openNotifs" })}
@@ -19054,6 +20412,7 @@ No app: Adicionar contato \u2192 cole este c\xF3digo.`;
     ${le({ i: "db", n: "Armazenamento", s: "Espa\xE7o usado e limpeza de m\xEDdia", act: "openStorage" })}
     <div class="label">Sobre</div>
     ${le({ i: "sparkle", n: "Sobre o J-Menseger", s: `Vers\xE3o ${h.version} \xB7 como a privacidade funciona`, act: "openAbout" })}
+    ${X.available ? le({ i: "download", n: jmUpd.info ? "Atualiza\xE7\xE3o dispon\xEDvel" : "Procurar atualiza\xE7\xF5es", s: jmUpd.info ? `Vers\xE3o ${M(jmUpd.info.versao)} \xB7 toque para instalar` : "O app procura sozinho a cada 6 horas", act: "updOpen", dot: !!jmUpd.info }) : ""}
     ${le({ i: "share", n: "Convidar amigos", s: "Compartilhe seu c\xF3digo", act: "shareMyCode" })}
     ${le({ i: "logout", n: "Sair e apagar deste aparelho", s: "Remove a conta e as conversas deste celular", act: "wipeAll", danger: !0 })}
     <div style="height:100px"></div>`;
@@ -19230,6 +20589,8 @@ No app: Adicionar contato \u2192 cole este c\xF3digo.`;
       }
       <label class="lbl">Chave secreta (avan\xE7ado)</label>
       <div class="idbox selectable"><span id="nsecbox">nsec1\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022</span><button class="ibtn sm" data-act="revealNsec" aria-label="Mostrar chave">${x("eye", "sm")}</button></div>
+      <div class="label" style="padding-left:0">Usar em outro aparelho</div>
+      <p class="sh-sub">No PC ou em outro celular, escolha \u201CJ\xE1 tenho uma conta\u201D e digite estas palavras. Com este aparelho aberto, o outro recebe seus contatos e grupos sozinho. As mensagens novas chegam nos dois; para levar o hist\xF3rico antigo, use Armazenamento \u2192 Fazer backup.</p>
       <button class="btn" data-act="wordsDone">J\xE1 anotei</button>
       <div style="height:30px"></div></div></div>`,
     ),
@@ -19281,6 +20642,8 @@ No app: Adicionar contato \u2192 cole este c\xF3digo.`;
     ${le({ i: "eyeoff", n: "Bloquear capturas de tela", s: "Esconde o conte\xFAdo nas capturas e na tela de apps recentes", act: "tgl", data: 'data-k="lockScreenshots"', sw: e.lockScreenshots })}
     <div class="label">Mensagens</div>
     ${le({ i: "checks", n: "Confirma\xE7\xE3o de leitura", s: "Se desligar, voc\xEA tamb\xE9m n\xE3o v\xEA quando leram", act: "tgl", data: 'data-k="readReceipts"', sw: e.readReceipts })}
+    ${le({ i: "share", n: "Pr\xE9via dos links que eu mando", s: "Seu celular abre o site para pegar t\xEDtulo e imagem; quem recebe n\xE3o acessa nada", act: "tgl", data: 'data-k="linkPreviews"', sw: e.linkPreviews !== !1 })}
+    ${le({ i: "eye", n: "Mostrar quando estou online", s: "Se desligar, voc\xEA tamb\xE9m n\xE3o v\xEA quem est\xE1 online", act: "tgl", data: 'data-k="presence"', sw: e.presence !== !1 })}
     ${le({ i: "chat", n: "Mostrar quando estou digitando", act: "tgl", data: 'data-k="typing"', sw: e.typing })}
     ${le({ i: "timer", n: "Mensagens tempor\xE1rias para novas conversas", act: "ttlDefault", val: yt(e.ttlDefault) })}
     ${le({ i: "bell", n: "Pr\xE9via nas notifica\xE7\xF5es", act: "notifPreview", val: s })}
@@ -19303,6 +20666,7 @@ No app: Adicionar contato \u2192 cole este c\xF3digo.`;
     let s = y(".sw", t);
     s && s.setAttribute("aria-checked", n),
       e === "lockScreenshots" && X.setSecure(n),
+      e === "presence" && jmPresTick(!0),
       e === "background" && X.setBackground(n && a.settings.notifications),
       e === "notifications" &&
         (n && X.requestNotifications(),
@@ -19858,7 +21222,10 @@ No app: Adicionar contato \u2192 cole este c\xF3digo.`;
     J.open(
       "storage",
       `<div class="sc-top"><div class="subhead"><button class="ibtn" data-act="back" aria-label="Voltar">${x("back")}</button><h2>Armazenamento</h2></div>
-    <div class="scroll"><div class="label">Neste aparelho</div>
+    <div class="scroll"><div class="label">Backup</div>
+      ${le({ i: "download", n: "Fazer backup das conversas", s: "Arquivo cifrado com a chave da sua conta: s\xF3 abre com as suas palavras. Fotos e \xE1udios n\xE3o entram.", act: "backupExport" })}
+      ${le({ i: "refresh", n: "Restaurar backup", s: "Junta mensagens, contatos e grupos do arquivo com os daqui. Nada \xE9 apagado.", act: "backupImport" })}
+      <div class="label">Neste aparelho</div>
       ${le({ i: "db", n: "Espa\xE7o usado pelo app", act: "noop", val: t })}
       ${le({ i: "image", n: "Fotos e \xE1udios", act: "noop", val: (a / 1048576).toFixed(1) + " MB" })}
       <div style="padding:0 18px"><button class="btn ghost" data-act="clearMedia">Apagar fotos e \xE1udios deste aparelho</button></div>
@@ -19866,6 +21233,32 @@ No app: Adicionar contato \u2192 cole este c\xF3digo.`;
     );
   });
   b("noop", () => {});
+  b("backupExport", async () => {
+    _("Preparando o backup\u2026", 6e3);
+    try {
+      let t = await h.engine.exportBackup(),
+        e = `J-Menseger backup ${new Date().toISOString().slice(0, 10)}.jmbackup`,
+        a = X.saveFile(e, Fa.enc(t));
+      if (a === void 0) {
+        let n = document.createElement("a");
+        (n.href = URL.createObjectURL(new Blob([t], { type: "application/octet-stream" }))), (n.download = e), n.click(), setTimeout(() => URL.revokeObjectURL(n.href), 5e3), _("Backup salvo");
+      } else a ? ee(`<h2 class="sh-title">Backup salvo</h2><p class="sh-sub">Est\xE1 em <b>${M(a)}</b>. Guarde junto com as suas palavras de recupera\xE7\xE3o: sem elas o arquivo n\xE3o abre.</p><button class="btn" data-act="closeSheet">Entendi</button>`) : _("N\xE3o foi poss\xEDvel salvar o backup.");
+    } catch (t) {
+      _(t.message || "N\xE3o foi poss\xEDvel fazer o backup.");
+    }
+  });
+  b("backupImport", async () => {
+    let t = await Kn(".jmbackup,application/octet-stream,*/*");
+    if (t) {
+      _("Restaurando\u2026", 8e3);
+      try {
+        let e = await h.engine.importBackup(new Uint8Array(await t.arrayBuffer()));
+        _(`Backup restaurado: ${e.messages} mensagens, ${e.contacts} contatos e ${e.groups} grupos novos`, 4e3), Ae();
+      } catch (e) {
+        _(e.message || "N\xE3o foi poss\xEDvel restaurar.", 4e3);
+      }
+    }
+  });
   b("clearMedia", async () => {
     if (
       !(await ge({
@@ -19883,6 +21276,49 @@ No app: Adicionar contato \u2192 cole este c\xF3digo.`;
         e.media.ready &&
         ((e.media.ready = !1), (e.media.err = !0), await t.db.put("msgs", e));
     J.pop(), _("M\xEDdia apagada");
+  });
+  // ---- Atualização automática (o download e a instalação ficam no lado Android) ----
+  var jmUpd = { info: null, prog: -1, manual: !1, avisada: "" };
+  function jmUpdSheet() {
+    let t = jmUpd.info;
+    if (!t) return;
+    let e = t.tamanho ? ` \xB7 ${(t.tamanho / 1048576).toFixed(1)} MB` : "";
+    ee(`<h2 class="sh-title">Atualiza\xE7\xE3o dispon\xEDvel</h2><p class="sh-sub">Vers\xE3o ${M(t.versao)}${e} (voc\xEA tem a ${M(h.version)})</p>
+    ${t.novidades ? `<p class="sh-sub" style="white-space:pre-line">${M(t.novidades)}</p>` : ""}
+    <div class="upd-bar" id="updbar" ${jmUpd.prog < 0 ? "hidden" : ""}><i style="width:${Math.max(0, jmUpd.prog)}%"></i></div>
+    <p class="sh-sub" id="updtxt">${jmUpd.prog < 0 ? "O arquivo \xE9 conferido antes de instalar. O Android vai pedir para voc\xEA confirmar." : jmUpd.prog >= 100 ? "Abrindo o instalador\u2026" : `Baixando\u2026 ${jmUpd.prog}%`}</p>
+    <div class="two"><button class="btn ghost" data-act="updLater" style="margin:0">Depois</button><button class="btn" data-act="updGo" id="updgo" style="margin:0" ${jmUpd.prog >= 0 && jmUpd.prog < 100 ? "disabled" : ""}>${x("download", "sm")}&nbsp;Atualizar</button></div>`);
+  }
+  function jmUpdFound(t) {
+    let e = jmUpd.manual;
+    if (((jmUpd.manual = !1), (jmUpd.info = t || null), !t)) {
+      e && _("Voc\xEA j\xE1 tem a vers\xE3o mais nova");
+      return;
+    }
+    (e || jmUpd.avisada !== t.versao) && ((jmUpd.avisada = t.versao), jmUpdSheet());
+  }
+  function jmUpdProgress(t) {
+    jmUpd.prog = t;
+    let e = y("#updbar"),
+      a = y("#updtxt"),
+      n = y("#updgo");
+    e && ((e.hidden = !1), (e.firstElementChild.style.width = t + "%")),
+      a && (a.textContent = t >= 100 ? "Abrindo o instalador\u2026" : `Baixando\u2026 ${t}%`),
+      n && (n.disabled = t < 100),
+      t >= 100 && setTimeout(() => (jmUpd.prog = -1), 3e3);
+  }
+  function jmUpdError(t) {
+    jmUpd.prog = -1;
+    let e = y("#updgo"),
+      a = y("#updtxt");
+    e && (e.disabled = !1), a && (a.textContent = t), _(t, 4e3);
+  }
+  b("updOpen", () => {
+    jmUpd.info ? jmUpdSheet() : ((jmUpd.manual = !0), _("Procurando atualiza\xE7\xF5es\u2026"), X.updateCheck());
+  });
+  b("updLater", () => F());
+  b("updGo", () => {
+    jmUpd.prog < 0 && ((jmUpd.prog = 0), jmUpdProgress(0)), X.updateDownload();
   });
   b("openAbout", () => {
     ee(`<div class="about">${qe(96)}<h3><span>J-</span>Menseger</h3><p>Vers\xE3o ${M(h.version)} \xB7 beta para testes</p>
@@ -20243,8 +21679,9 @@ No app: Adicionar contato \u2192 cole este c\xF3digo.`;
     let n = h.engine,
       s = n.settings;
     if (a && h.visible) return;
-    let o = n.chats.get(t);
-    if (!o || o.muted) return;
+    let o = n.chats.get(t),
+      jmMen = !!o && o.kind === "group" && e.kind === "text" && e.from !== n.pk && jmMentionsMe(e.text, o, e.from);
+    if (!o || (o.muted && !jmMen)) return;
     let r, i, c;
     if (o.kind === "dm") {
       let d = n.contacts.get(o.pk) || {};
@@ -20254,7 +21691,7 @@ No app: Adicionar contato \u2192 cole este c\xF3digo.`;
         (r = d.status === "request" ? "Novo pedido de mensagem" : i);
     } else {
       let d = n.groups.get(o.lid);
-      if (!d || d.mute) return;
+      if (!d || (d.mute && !jmMen)) return;
       let f = d.meta.channels.find((p) => p.id === o.ch);
       (i = ne(e.from)),
         (r = `${i} \xB7 ${d.meta.name}${f ? " #" + f.name : ""}`),
@@ -20268,6 +21705,8 @@ No app: Adicionar contato \u2192 cole este c\xF3digo.`;
       return;
     }
     if (!s.notifications) return;
+    let jmMeuSt = jmCleanStatus(n.me && n.me.st);
+    if (jmMeuSt && jmMeuSt.dnd) return;
     let u = s.notifPreview;
     X.notify({
       tag: t,
@@ -20281,6 +21720,9 @@ No app: Adicionar contato \u2192 cole este c\xF3digo.`;
             : "Voc\xEA tem uma nova mensagem",
       silent: !s.sounds,
       vibrate: !!s.vibrate,
+      // Responder pela notificação: não com PIN (seria um atalho por cima do bloqueio).
+      reply: !n.hasPin && (o.kind === "group" || (n.contacts.get(o.pk) || {}).status === "ok"),
+      read: !n.hasPin,
     });
   }
   function Z0(t) {
@@ -20321,6 +21763,23 @@ No app: Adicionar contato \u2192 cole este c\xF3digo.`;
         a &&
           a.key === e &&
           (J.popTo("chat"), J.pop(), _("Este canal foi apagado por um admin."));
+      }),
+      t.on("synced", (e) => {
+        _(`Seu outro aparelho mandou ${e.contacts} contatos e ${e.groups} grupos`, 3500), Ae(), Be();
+      }),
+      t.on("remoteLogout", async () => {
+        P.busyCall && P.busyCall() && P.leaveRoom && P.leaveRoom(), X.setBackground(!1), await h.engine.wipe();
+        try {
+          let a = localStorage.getItem("jm.theme");
+          localStorage.clear(), a && localStorage.setItem("jm.theme", a);
+        } catch {}
+        location.reload();
+      }),
+      t.on("pins", (e) => {
+        C && C.key === e && jmPinBar();
+      }),
+      t.on("presence", (e) => {
+        C && C.chat && C.chat.pk === e && sn();
       }),
       t.on("listening", (e) => {
         C && C.chat && C.chat.pk === e && sn();
@@ -20392,6 +21851,15 @@ No app: Adicionar contato \u2192 cole este c\xF3digo.`;
       X.setSecure(!!e.settings.lockScreenshots),
       X.setBackground(!!(e.settings.notifications && e.settings.background)),
       setInterval(Mi, 1500),
+      X.available && (setTimeout(() => X.updateCheck(), 8e3), setInterval(() => X.updateCheck(), 216e5)),
+      setTimeout(() => jmPresTick(!0), 2500),
+      jmVolLoad(),
+      setTimeout(() => e.announceDevice().catch(() => {}), 12e3),
+      setInterval(() => e.announceDevice().catch(() => {}), 216e5),
+      setTimeout(() => e.syncRequest().then(() => e.syncPush(!1)).catch(() => {}), 1e4),
+      setInterval(() => e.syncPush(!1).catch(() => {}), 6e4),
+      setInterval(() => jmPresTick(), 6e4),
+      setInterval(() => jmEventReminders().catch(() => {}), 3e4),
       setInterval(() => Ae(), 6e4),
       Io)
     ) {
@@ -20462,6 +21930,16 @@ No app: Adicionar contato \u2192 cole este c\xF3digo.`;
     onLink: (t) => Bf(t),
     onCallAction: (t) => bf(t),
     onSpotify: (t) => jmSpotifyFrom(t),
+    onScreen: (t) => (t ? jmScreenOn() : jmScreenOff()),
+    onNotifReply: (t, e) => jmNotifAct(t, e),
+    onNotifRead: (t) => jmNotifAct(t, null),
+    onLinkPreview: (t, e) => {
+      let a = jmLpWait.get(t);
+      a && (jmLpWait.delete(t), a(e));
+    },
+    onUpdate: (t) => jmUpdFound(t),
+    onUpdateProgress: (t) => jmUpdProgress(t),
+    onUpdateError: (t) => jmUpdError(t),
     onResume: () => {
       h.engine && h.engine.wake();
     },
@@ -20565,7 +22043,7 @@ No app: Adicionar contato \u2192 cole este c\xF3digo.`;
     await Qd(a),
       Z0(a),
       n ? (await rs(), Tf()) : (Ea("chats", !0), $f()),
-      (h.visible = !document.hidden);
+      (h.visible = !document.hidden && X.foreground());
   }
   X0();
 })();

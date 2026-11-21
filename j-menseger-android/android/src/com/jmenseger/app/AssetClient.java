@@ -64,6 +64,16 @@ public class AssetClient extends WebViewClient {
             return blocked(403, "Forbidden");
         }
         String path = u.getPath();
+        if ("/__screen.jpg".equals(path)) {
+            // Último quadro da tela do celular (transmissão em andamento).
+            byte[] q = ScreenShare.latest;
+            if (q == null) return blocked(404, "Not Found");
+            WebResourceResponse r = new WebResourceResponse("image/jpeg", null, new ByteArrayInputStream(q));
+            Map<String, String> h = new HashMap<String, String>();
+            h.put("Cache-Control", "no-store");
+            r.setResponseHeaders(h);
+            return r;
+        }
         if (path == null || path.equals("/")) path = "/index.html";
         if (path.contains("..")) return blocked(404, "Not Found");
         try {

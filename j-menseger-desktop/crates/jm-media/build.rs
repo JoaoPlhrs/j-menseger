@@ -9,9 +9,29 @@ fn main() {
     println!("cargo:rerun-if-changed=csrc/vpx_abi.c");
     println!("cargo:rerun-if-changed=csrc/vpx.h");
 
+    println!("cargo:rerun-if-env-changed=JM_VPX_STATIC");
+    // Versão para distribuir no Linux: libvpx dentro do programa (cada
+    // distribuição tem uma versão diferente da biblioteca).
+    let estatico = std::env::var("JM_VPX_STATIC").is_ok();
     let lib = pkg_config::Config::new()
+        .cargo_metadata(!estatico)
         .probe("vpx")
         .expect("libvpx não encontrada. No Debian/Ubuntu: apt install libvpx-dev");
+    if estatico {
+        // O pkg-config não liga estático o que está nas pastas do sistema:
+        // aqui vai à mão, direto do libvpx.a.
+        for d in &lib.link_paths {
+            println!("cargo:rustc-link-search=native={}", d.display());
+        }
+        for d in ["/usr/lib/x86_64-linux-gnu", "/usr/lib64", "/usr/lib"] {
+            if std::path::Path::new(d).join("libvpx.a").exists() {
+                println!("cargo:rustc-link-search=native={d}");
+            }
+        }
+        println!("cargo:rustc-link-lib=static=vpx");
+        println!("cargo:rustc-link-lib=dylib=m");
+        println!("cargo:rustc-link-lib=dylib=pthread");
+    }
 
     let mut bindings = bindgen::Builder::default()
         .header("csrc/vpx.h")

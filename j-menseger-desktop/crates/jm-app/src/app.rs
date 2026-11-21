@@ -85,12 +85,71 @@ pub enum Msg {
     OnbRestore,
     Started(Result<StartedOk, String>),
 
+    /* editar, fixar, buscar, enquetes, menções, cargos */
+    EditStart(String),
+    EditCancel,
+    PinMsg(String, bool),
+    OpenPins,
+    PinsLoaded(Vec<jm_core::engine::Message>),
+    JumpTo(String),
+    JumpLoaded(String, String, Vec<jm_core::engine::Message>),
+    OpenSearch,
+    SearchLoaded(Vec<jm_core::engine::Message>),
+    SearchInput(String),
+    OpenPoll,
+    PollQ(String),
+    PollOpt(usize, String),
+    PollAddOpt,
+    PollDelOpt(usize),
+    PollMulti(bool),
+    PollSend,
+    Vote(String, u8),
+    OpenVoters(String),
+    OpenRoles(String),
+    RoleForm(Option<String>),
+    RoleName(String),
+    RoleColor(u8),
+    RoleSave,
+    RoleDelete(String),
+    OpenMemberRoles(String, String),
+    RoleToggle(String, String, String, bool),
+    MentionPick(String),
+    OpenSetStatus,
+    StatusField(u8, String),
+    StatusDnd(bool),
+    StatusDur(u8),
+    StatusSave(bool),
+    RemoveDevice(String),
+    ShareAudio(bool),
+    OpenPeerVolume(String),
+    PeerVolume(f32),
+    RolePerm(String, bool),
+    OpenEvent,
+    EventField(u8, String),
+    EventSend,
+    Rsvp(String, String),
+    BackupExport,
+    PickFile,
+    FilePicked(Result<Option<(String, String, Vec<u8>)>, String>),
+    SaveFile(String, String),
+    OpenForward(String),
+    ForwardQuery(String),
+    ForwardTo(String),
+    OpenViewOnce(String),
+    ViewOnceBytes(String, Result<Vec<u8>, String>),
+    SendPhotoOnce,
+    SendTextReady(String, String, Option<String>, Option<jm_core::messages::LinkPreview>),
+    BackupImport,
+
     /* geral */
     Engine(Box<EngineEvent>),
     Tick,
     Focus(bool),
     WindowSize(Size),
     WindowId(Option<iced::window::Id>),
+    CloseRequested(iced::window::Id),
+    TrayClose(bool),
+    TrayAutostart(bool),
     FileHover(bool),
     FileDropped(PathBuf),
     Key(Key),
@@ -215,11 +274,18 @@ pub enum Msg {
     ToggleMute,
     CallUpdated(Option<crate::calls::CallInfo>),
     RoomUpdated(Option<crate::calls::RoomInfo>),
+    RoomFrame(String, u64, iced::widget::image::Handle),
     FrameArrived(u64, iced::widget::image::Handle),
     OpenShare,
     ShareQuality(Quality),
     ShareSource(u32),
     StopSharing,
+    ToggleCamera,
+    UpdateCheck,
+    UpdateFound(Result<Option<crate::atualizar::Pacote>, String>),
+    UpdateStart,
+    UpdateDownloaded(Result<std::path::PathBuf, String>),
+    CameraToggled(Result<bool, String>),
     CallSound(String),
     SaveBannerSound,
     JoinRoom(String, String),
@@ -529,6 +595,18 @@ impl App {
                 self.onb = Onboard { notify: true, tone: rand_tone(), ..Default::default() };
                 Task::none()
             }
+            Msg::CloseRequested(id) => match &mut self.screen {
+                // Fica na bandeja: conectado, com notificações.
+                Screen::Main(m) if crate::tray::SUPPORTED && m.tray_close => {
+                    m.focused = false;
+                    if !m.tray_told {
+                        m.tray_told = true;
+                        crate::platform::notify("J-Menseger continua ligado".into(), "Está na bandeja, perto do relógio. Para sair, clique com o botão direito no ícone.".into());
+                    }
+                    iced::window::set_mode(id, iced::window::Mode::Hidden)
+                }
+                _ => iced::exit(),
+            },
             outra => match &mut self.screen {
                 Screen::Main(m) => m.update(outra),
                 _ => Task::none(),
@@ -558,6 +636,7 @@ fn on_event(ev: iced::Event, status: iced::event::Status, id: iced::window::Id) 
             *CURSOR.lock().unwrap() = position;
             None
         }
+        iced::Event::Window(W::CloseRequested) => Some(Msg::CloseRequested(id)),
         iced::Event::Window(W::Focused) => Some(Msg::Focus(true)),
         iced::Event::Window(W::Unfocused) => Some(Msg::Focus(false)),
         iced::Event::Window(W::Resized(s)) => Some(Msg::WindowSize(s)),

@@ -92,6 +92,28 @@ pub fn prepare(bytes: &[u8]) -> Result<Photo> {
     Ok(Photo { bytes: dados, mime: "image/jpeg", w, h, th: thumbnail(&img)? })
 }
 
+/// Miniatura da prévia de um link: até 200 px no lado maior, em data URL
+/// JPEG de no máximo ~24 KB.
+pub fn link_thumb(bytes: &[u8]) -> Result<String> {
+    let img = open(bytes)?;
+    let (w, h) = (img.width().max(1), img.height().max(1));
+    let mut lado = 200.0f64;
+    loop {
+        let e = (lado / w.max(h) as f64).min(1.0);
+        let p = img.resize_exact(((w as f64 * e).round() as u32).max(1), ((h as f64 * e).round() as u32).max(1), image::imageops::FilterType::Triangle);
+        for q in [70u8, 55, 40] {
+            let u = data_url("image/jpeg", &jpeg(&p, q)?);
+            if u.len() <= 24_000 {
+                return Ok(u);
+            }
+        }
+        lado *= 0.7;
+        if lado < 40.0 {
+            return Err(PhotoError::Encode("miniatura grande demais".into()));
+        }
+    }
+}
+
 /// Miniatura de 24 px no lado maior, em data URL.
 pub fn thumbnail(img: &DynamicImage) -> Result<String> {
     let (w, h) = (img.width().max(1), img.height().max(1));

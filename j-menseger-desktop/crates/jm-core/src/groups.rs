@@ -45,6 +45,48 @@ pub struct GroupMeta {
     /// Nome que cada membro escolheu mostrar dentro do grupo.
     #[serde(default)]
     pub names: std::collections::HashMap<String, String>,
+    /// Cargos do grupo (nome e cor), na ordem em que aparecem.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub roles: Vec<Role>,
+    /// Cargos de cada membro.
+    #[serde(default, skip_serializing_if = "std::collections::HashMap::is_empty")]
+    pub mroles: std::collections::HashMap<String, Vec<String>>,
+}
+
+/// Um cargo do grupo: só nome e cor (os poderes continuam sendo de dono e admins).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Role {
+    pub id: String,
+    pub n: String,
+    /// Uma das 8 cores da paleta (0 a 7), igual no celular.
+    #[serde(default)]
+    pub c: u8,
+    /// Poderes do cargo: `pin` (fixar), `del` (apagar mensagens dos outros),
+    /// `todos` (mencionar @todos). Mudar o grupo continua só com admins.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub p: Vec<String>,
+}
+
+/// Poderes que um cargo pode dar.
+pub const PERMS: [(&str, &str); 3] = [("pin", "Fixar mensagens"), ("del", "Apagar mensagens de outros"), ("todos", "Mencionar @todos")];
+
+pub const MAX_ROLES: usize = 12;
+pub const MAX_ROLES_POR_MEMBRO: usize = 4;
+
+/// As 8 cores de cargo, em RGB (as mesmas do celular).
+pub const ROLE_CORES: [(u8, u8, u8); 8] = [
+    (0xef, 0x53, 0x50),
+    (0xff, 0x98, 0x00),
+    (0xfd, 0xd8, 0x35),
+    (0x4c, 0xaf, 0x50),
+    (0x26, 0xa6, 0x9a),
+    (0x42, 0xa5, 0xf5),
+    (0xab, 0x47, 0xbc),
+    (0xec, 0x40, 0x7a),
+];
+
+fn valid_role_id(id: &str) -> bool {
+    (1..=12).contains(&id.len()) && id.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit())
 }
 
 /// Limites que evitam que um grupo malformado (ou mal-intencionado) estoure a
@@ -56,6 +98,17 @@ const MAX_ADMINS: usize = 10;
 impl GroupMeta {
     pub fn is_admin(&self, pk: &str) -> bool {
         self.owner == pk || self.admins.iter().any(|a| a == pk)
+    }
+
+    /// A pessoa tem este poder (admins têm todos).
+    pub fn can(&self, pk: &str, perm: &str) -> bool {
+        self.is_admin(pk) || self.roles_of(pk).iter().any(|r| r.p.iter().any(|x| x == perm))
+    }
+
+    /// Cargos de um membro, na ordem do grupo.
+    pub fn roles_of(&self, pk: &str) -> Vec<&Role> {
+        let Some(ids) = self.mroles.get(pk) else { return Vec::new() };
+        self.roles.iter().filter(|r| ids.contains(&r.id)).collect()
     }
 
     pub fn text_channels(&self) -> impl Iterator<Item = &Channel> {
@@ -112,6 +165,7 @@ impl GroupMeta {
         for v in self.names.values_mut() {
             *v = clamp(v, 40);
         }
+        self.clean_roles();
         Some(self)
     }
 }
@@ -171,6 +225,8 @@ impl Group {
             sk: keys.secret_key().to_secret_hex(),
             old_keys: Vec::new(),
             meta: GroupMeta {
+                roles: Vec::new(),
+                mroles: Default::default(),
                 lid: Some(pk.clone()),
                 name: clamp(name, 40),
                 desc: String::new(),
@@ -241,6 +297,10 @@ pub enum GroupPatch {
     MoveChannel { id: String, dir: i8 },
     RemoveChannel(String),
     Admin { pk: String, on: bool },
+    AddRole { n: String, c: u8 },
+    EditRole { id: String, n: Option<String>, c: Option<u8>, p: Option<Vec<String>> },
+    RemoveRole(String),
+    MemberRole { pk: String, id: String, on: bool },
 }
 
 impl GroupMeta {
@@ -301,6 +361,45 @@ impl GroupMeta {
                         removidos.push(c);
                     }
                 }
+            }
+            GroupPatch::AddRole { n, c } => {
+                if self.roles.len() < MAX_ROLES {
+                    let mut b = [0u8; 4];
+                    getrandom_bytes(&mut b);
+                    let id: String = b.iter().map(|x| format!("{x:02x}")).collect();
+                    let n = clamp(n, 24);
+                    self.roles.push(Role { id, n: if n.is_empty() { "Cargo".into() } else { n }, c: c % 8, p: Vec::new() });
+                }
+            }
+            GroupPatch::EditRole { id, n, c, p } => {
+                if let Some(r) = self.roles.iter_mut().find(|r| &r.id == id) {
+                    if let Some(n) = n {
+                        let n = clamp(n, 24);
+                        if !n.is_empty() {
+                            r.n = n;
+                        }
+                    }
+                    if let Some(c) = c {
+                        r.c = c % 8;
+                    }
+                    if let Some(p) = p {
+                        r.p = p.clone();
+                    }
+                }
+            }
+            GroupPatch::RemoveRole(id) => {
+                self.roles.retain(|r| &r.id != id);
+                self.clean_roles();
+            }
+            GroupPatch::MemberRole { pk, id, on } => {
+                if self.roles.iter().any(|r| &r.id == id) {
+                    let lista = self.mroles.entry(pk.clone()).or_default();
+                    lista.retain(|x| x != id);
+                    if *on && lista.len() < MAX_ROLES_POR_MEMBRO {
+                        lista.push(id.clone());
+                    }
+                }
+                self.clean_roles();
             }
             GroupPatch::Admin { pk, on } => {
                 if *on {
@@ -417,6 +516,35 @@ pub fn slug(s: &str) -> String {
     }
 }
 
+impl GroupMeta {
+    /// Apara cargos vindos de fora: ids válidos, nomes curtos, cores 0..8, e
+    /// só membros de verdade com cargos que existem.
+    fn clean_roles(&mut self) {
+        self.roles.retain(|r| valid_role_id(&r.id));
+        self.roles.truncate(MAX_ROLES);
+        for r in &mut self.roles {
+            r.n = clamp(&r.n, 24);
+            if r.n.is_empty() {
+                r.n = "Cargo".into();
+            }
+            r.c %= 8;
+            r.p.retain(|x| PERMS.iter().any(|(k, _)| k == x));
+            r.p.dedup();
+        }
+        let ids: Vec<String> = self.roles.iter().map(|r| r.id.clone()).collect();
+        let membros = self.members.clone();
+        self.mroles.retain(|pk, v| {
+            v.retain(|x| ids.contains(x));
+            v.truncate(MAX_ROLES_POR_MEMBRO);
+            membros.contains(pk) && !v.is_empty()
+        });
+    }
+}
+
+fn getrandom_bytes(b: &mut [u8]) {
+    rand::Rng::fill(&mut rand::rng(), b);
+}
+
 #[cfg(test)]
 mod patch_tests {
     use super::*;
@@ -488,6 +616,31 @@ mod patch_tests {
 mod tests {
     use super::*;
 
+    #[test]
+    fn cargos_sao_aparados_e_seguem_os_membros() {
+        let mut m = Group::create("Turma", &Keys::generate().public_key(), "Ana", Template::Jogos).meta;
+        let membro = m.members[0].clone();
+        m.apply(&GroupPatch::AddRole { n: "Moderador".into(), c: 13 });
+        let id = m.roles[0].id.clone();
+        assert_eq!(m.roles[0].c, 5, "cor fica entre 0 e 7");
+        m.apply(&GroupPatch::MemberRole { pk: membro.clone(), id: id.clone(), on: true });
+        assert_eq!(m.roles_of(&membro).len(), 1);
+        // Quem não é membro não guarda cargo.
+        m.apply(&GroupPatch::MemberRole { pk: "f".repeat(64), id: id.clone(), on: true });
+        assert!(!m.mroles.contains_key(&"f".repeat(64)));
+        // Apagar o cargo tira de todo mundo.
+        m.apply(&GroupPatch::RemoveRole(id));
+        assert!(m.roles_of(&membro).is_empty() && m.mroles.is_empty());
+        // Cargo vindo de fora com id esquisito some na limpeza.
+        let mut v = serde_json::to_value(&m).unwrap();
+        v["roles"] = serde_json::json!([{"id":"../x","n":"Mal","c":1},{"id":"ab12","n":"Bom","c":99}]);
+        v["mroles"] = serde_json::json!({ membro.clone(): ["ab12","../x"] });
+        let limpo: GroupMeta = serde_json::from_value::<GroupMeta>(v).unwrap().sanitize(&m.owner).unwrap();
+        assert_eq!(limpo.roles.len(), 1);
+        assert_eq!(limpo.roles[0].c, 3);
+        assert_eq!(limpo.mroles[&membro], vec!["ab12".to_string()]);
+    }
+
     fn dono() -> Keys {
         Keys::generate()
     }
@@ -551,6 +704,8 @@ mod tests {
     fn dados_vindos_de_fora_sao_aparados() {
         let dono_hex = "a".repeat(64);
         let bruto = GroupMeta {
+            roles: Vec::new(),
+            mroles: Default::default(),
             lid: None,
             name: " ".to_string() + &"n".repeat(80),
             desc: "d".repeat(400),
@@ -585,6 +740,8 @@ mod tests {
     #[test]
     fn grupo_sem_canal_de_texto_e_recusado() {
         let m = GroupMeta {
+            roles: Vec::new(),
+            mroles: Default::default(),
             lid: None,
             name: "G".into(),
             desc: String::new(),

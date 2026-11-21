@@ -11,6 +11,8 @@ use serde::{Deserialize, Serialize};
 
 /// Maior mídia aceita, em bytes.
 pub const MAX_MEDIA: usize = 2_400_000;
+/// Arquivos (PDF, zip, documentos).
+pub const MAX_FILE: usize = 5_000_000;
 /// Foto de perfil ou de grupo: data URL pequena.
 pub const PIC_MAX: usize = 24_000;
 /// Miniatura embutida no cabeçalho de uma foto.
@@ -20,7 +22,42 @@ pub const MAX_SOUND_BYTES: usize = 160_000;
 
 /// Quantos blocos uma mídia do tamanho máximo ocupa.
 pub fn max_chunks() -> u32 {
-    MAX_MEDIA.div_ceil(CHUNK) as u32
+    MAX_FILE.div_ceil(CHUNK) as u32
+}
+
+/// Limite de tamanho de cada tipo.
+pub fn max_size(kind: MediaKind) -> usize {
+    if kind == MediaKind::File {
+        MAX_FILE
+    } else {
+        MAX_MEDIA
+    }
+}
+
+/// Tipo de arquivo bem formado (`algo/coisa`), para documentos.
+pub fn file_mime_ok(mime: &str) -> bool {
+    let m = mime.to_ascii_lowercase();
+    let Some((a, b)) = m.split_once('/') else { return false };
+    let ok = |s: &str| !s.is_empty() && s.len() <= 60 && s.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || ".+-_".contains(c));
+    ok(a) && ok(b)
+}
+
+/// Nome de arquivo seguro: sem pastas, sem caracteres de controle, curto.
+pub fn clean_file_name(n: &str) -> String {
+    let base = n.rsplit(['/', '\\']).next().unwrap_or("");
+    let limpo: String = base
+        .chars()
+        .filter(|c| !c.is_control() && !"<>:\"|?*".contains(*c))
+        .take(120)
+        .collect::<String>()
+        .trim()
+        .trim_start_matches('.')
+        .to_string();
+    if limpo.is_empty() {
+        "arquivo".into()
+    } else {
+        limpo
+    }
 }
 
 /// Formatos aceitos. O celular grava áudio em WebM ou Ogg (Opus), às vezes
@@ -143,6 +180,15 @@ pub struct MediaInfo {
     /// Chegou corrompida (o hash não bateu).
     #[serde(default)]
     pub err: bool,
+    /// Nome do arquivo (documentos).
+    #[serde(default, rename = "fn", skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// Visualização única.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub vo: bool,
+    /// Já foi aberta (a de visualização única some depois disso).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub opened: bool,
 }
 
 /// Confere um cabeçalho que veio de outro aparelho, com os mesmos cortes do
@@ -151,7 +197,9 @@ pub fn validate_header(h: &MediaHeader) -> Option<MediaInfo> {
     if !is_mid(&h.mid) {
         return None;
     }
-    if h.n == 0 || h.n > max_chunks() || h.size == 0 || h.size > MAX_MEDIA as u64 || !mime_ok(&h.mime) {
+    let limite = max_size(h.kind);
+    let tipo_ok = if h.kind == MediaKind::File { file_mime_ok(&h.mime) } else { mime_ok(&h.mime) };
+    if h.n == 0 || h.n as usize > limite.div_ceil(CHUNK) || h.size == 0 || h.size > limite as u64 || !tipo_ok {
         return None;
     }
     let mut info = MediaInfo {
@@ -170,6 +218,9 @@ pub fn validate_header(h: &MediaHeader) -> Option<MediaInfo> {
         got: 0,
         ready: false,
         err: false,
+        name: (h.kind == MediaKind::File).then(|| clean_file_name(h.name.as_deref().unwrap_or(""))),
+        vo: h.kind != MediaKind::File && h.vo == Some(1),
+        opened: false,
     };
     if let (Some(w), Some(hh)) = (h.w, h.h) {
         info.w = Some(w.min(10_000));
@@ -203,7 +254,7 @@ pub fn clean_sound_meta(n: &str, e: &str) -> SoundMeta {
 
 /// Um bloco recebido é plausível?
 pub fn chunk_ok(mid: &str, i: u32, d: &str) -> bool {
-    is_mid(mid) && i <= 200 && d.len() <= 30_000
+    is_mid(mid) && i < max_chunks() && d.len() <= 30_000
 }
 
 /// Identificador de mídia: 16 bytes aleatórios em hexadecimal minúsculo.
@@ -236,6 +287,8 @@ mod tests {
 
     fn cab() -> MediaHeader {
         MediaHeader {
+            name: None,
+            vo: None,
             mid: "0123456789abcdef0123456789abcdef".into(),
             kind: MediaKind::Image,
             mime: "image/webp".into(),

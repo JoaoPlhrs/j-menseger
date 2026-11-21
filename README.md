@@ -12,13 +12,15 @@ Mensagens, chamadas e salas de voz cifradas de ponta a ponta, sem telefone e sem
 <br />
 
 ![Windows](https://img.shields.io/badge/Windows-10%20%7C%2011-0078D4?logo=windows&logoColor=white)
+![Linux](https://img.shields.io/badge/Linux-Ubuntu%2022.04%2B-FCC624?logo=linux&logoColor=black)
+![macOS](https://img.shields.io/badge/macOS-11%2B-000000?logo=apple&logoColor=white)
 ![Android](https://img.shields.io/badge/Android-8%2B-3DDC84?logo=android&logoColor=white)
 ![Rust](https://img.shields.io/badge/Rust-desktop-000000?logo=rust&logoColor=white)
 ![JavaScript](https://img.shields.io/badge/JavaScript-interface-F7DF1E?logo=javascript&logoColor=black)
 ![Nostr](https://img.shields.io/badge/protocolo-Nostr-8E44AD)
 ![E2E](https://img.shields.io/badge/criptografia-ponta%20a%20ponta-2FD47C)
-![PC](https://img.shields.io/badge/PC-0.4.0-blue)
-![Android beta](https://img.shields.io/badge/Android-0.5.0%20beta-orange)
+![PC](https://img.shields.io/badge/PC-0.6.0-blue)
+![Android beta](https://img.shields.io/badge/Android-0.7.0%20beta-orange)
 
 <img src="docs/gifs/hero-site.gif" width="800" alt="Animação da página inicial do J-Menseger" />
 
@@ -50,7 +52,7 @@ O **J-Menseger** é um app de mensagens para grupos de amigos. Ele tem:
 - **Chamadas de voz e vídeo**, com transmissão de tela do PC para quem está no celular ou em outro PC;
 - **Criptografia de ponta a ponta**: sua conta é um par de chaves criado no seu próprio aparelho.
 
-Não existe cadastro com telefone ou e-mail. O app roda em **Windows** e **Android**, e as duas versões conversam entre si.
+Não existe cadastro com telefone ou e-mail. O app roda em **Windows**, **Linux**, **macOS** e **Android**, e todas as versões conversam entre si.
 
 ---
 
@@ -64,6 +66,10 @@ Não existe cadastro com telefone ou e-mail. O app roda em **Windows** e **Andro
 <br />
 
 - Mensagens de texto, voz e fotos, com **resposta**, **reação** e **apagar para todos**
+- **Responder e marcar como lida** direto pela notificação
+- **Encaminhar** mensagens e **enviar arquivos** de até 5 MB
+- **Foto e áudio de visualização única**
+- **Prévia de links** dentro da conversa
 - **GIFs** da busca do GIPHY ou da galeria, animados dentro da conversa
 - **Mensagens temporárias** que somem dos dois aparelhos
 - **Recibos de leitura** e indicador de **"digitando…"**, que podem ser desligados
@@ -78,9 +84,12 @@ Não existe cadastro com telefone ou e-mail. O app roda em **Windows** e **Andro
 <br />
 
 - **Grupos** com canais de texto e **salas de voz**
+- **Poderes por cargo** dentro do grupo
+- **Eventos do grupo** com lista de presença e lembrete
 - **Chamadas de voz e vídeo**, com tela cheia no computador
+- **Volume ajustável para cada pessoa** na chamada
 - **Soundboard**: aplausos, "ba dum tss" e seus próprios sons, tocados para todos na chamada
-- **Transmissão de tela** do PC para quem está no celular ou em outro PC
+- **Transmissão de tela** do PC para quem está no celular ou em outro PC, com **áudio do PC** (Windows)
 
 </details>
 
@@ -91,6 +100,7 @@ Não existe cadastro com telefone ou e-mail. O app roda em **Windows** e **Andro
 
 - **Banner e foto** de perfil, recortados no próprio aparelho
 - **Jogos favoritos** fixados no perfil
+- **Status personalizado**, com modo **Não perturbe**
 - **Integração com o Spotify**: seus contatos veem a música que está tocando, se você quiser
 - **Tema**: cores do app personalizáveis, com verde como padrão
 
@@ -104,6 +114,7 @@ Não existe cadastro com telefone ou e-mail. O app roda em **Windows** e **Andro
 - **PIN** e **bloqueio de capturas de tela** para quem divide o aparelho
 - **12 palavras** para recuperar a conta. Anote no papel: nem o projeto consegue recuperá-la sem elas
 - **Número de segurança** por contato, para conferir se a conversa é realmente com a pessoa
+- **Lista de aparelhos conectados**, para ver onde a sua conta está aberta
 
 </details>
 
@@ -112,7 +123,9 @@ Não existe cadastro com telefone ou e-mail. O app roda em **Windows** e **Andro
 
 <br />
 
+- Disponível para **Windows**, **Linux** e **macOS**
 - Barra de grupos e salas de voz no estilo Discord
+- Ícone na bandeja, abrir ao ligar e **atualização automática** (por enquanto, só no Windows)
 - Tour pela versão de computador:
 
 <img src="docs/gifs/tour-computador.gif" width="640" alt="Tour pelo app de computador" />
@@ -187,6 +200,8 @@ O app já vem com alguns relays públicos configurados. Você pode adicionar, re
 
 </details>
 
+> ℹ️ As telas são da versão que está no site. Se a interface mudou depois disso, as capturas podem estar um pouco desatualizadas.
+
 ---
 
 ## 📥 Instalação
@@ -195,17 +210,55 @@ Os arquivos estão em **[jmenseger-site.vercel.app](https://jmenseger-site.verce
 
 | Plataforma | Versão | Tamanho | Requisito |
 |---|---|---|---|
-| Windows | 0.4.0 | ~36 MB | Windows 10 ou 11 |
-| Android | 0.5.0 beta | ~0,7 MB | Android 8 ou mais novo |
+| Windows | 0.6.0 | ~37 MB | Windows 10 ou 11 |
+| Linux | 0.6.0 | ~16 MB (`.deb`) ou ~21 MB (`.tar.gz`) | Ubuntu 22.04+, Debian 12+, Fedora 36+ ou Mint 21+ |
+| macOS | 0.6.0 | ~17 MB (Apple Silicon) ou ~19 MB (Intel) | macOS 11 (Big Sur) ou mais novo |
+| Android | 0.7.0 beta | ~0,7 MB | Android 8 ou mais novo |
 
 <details>
 <summary><b>🪟 Windows</b></summary>
 
 <br />
 
-1. Abra o instalador baixado (`J-Menseger-0.4.0-instalador.exe`).
+1. Abra o instalador baixado (`J-Menseger-0.6.0-instalador.exe`).
 2. Se aparecer **"O Windows protegeu o computador"**, clique em **Mais informações** e depois em **Executar assim mesmo**.
 3. Clique em **Instalar**. O J-Menseger abre sozinho no final.
+
+</details>
+
+<details>
+<summary><b>🐧 Linux</b></summary>
+
+<br />
+
+Escolha um dos dois arquivos:
+
+- **`.deb`** (Ubuntu, Debian, Mint): abra o arquivo e clique em **Instalar**. Ou, no terminal:
+
+  ```bash
+  sudo apt install ./J-Menseger-0.6.0-linux-amd64.deb
+  ```
+
+- **`.tar.gz`** (qualquer distribuição): extraia o arquivo e rode o instalador de dentro da pasta. Ele instala só para você, **sem `sudo`**:
+
+  ```bash
+  tar -xzf J-Menseger-0.6.0-linux-x86_64.tar.gz
+  cd J-Menseger-0.6.0-linux-x86_64
+  ./instalar.sh
+  ```
+
+</details>
+
+<details>
+<summary><b>🍎 macOS</b></summary>
+
+<br />
+
+1. Escolha o arquivo certo para o seu Mac. Se em **Menu Apple → Sobre este Mac** aparecer "Chip: Apple M…", é o **Apple Silicon**. Se aparecer "Processador Intel", é o **Intel**.
+2. Abra o `.dmg` e arraste o J-Menseger para a pasta **Aplicativos**.
+3. Na primeira vez, o macOS avisa que não pôde verificar o app. Vá em **Ajustes do Sistema → Privacidade e Segurança** e clique em **Abrir Mesmo Assim**.
+
+> ℹ️ O app não passa pela notarização da Apple (que exige uma conta paga). Por isso esse aviso aparece na primeira vez.
 
 </details>
 
@@ -218,7 +271,7 @@ Os arquivos estão em **[jmenseger-site.vercel.app](https://jmenseger-site.verce
 2. Se o Android pedir, permita **instalar apps desta fonte**.
 3. Crie sua conta ou toque em **Restaurar com suas 12 palavras**.
 
-> ⚠️ **Tinha a versão 0.4?** Anote suas 12 palavras, desinstale a versão antiga e instale a 0.5. Ela **não instala por cima** da anterior.
+O app traz um atualizador próprio, para baixar e instalar novas versões sem precisar voltar ao site.
 
 </details>
 
@@ -231,8 +284,10 @@ Os arquivos estão em **[jmenseger-site.vercel.app](https://jmenseger-site.verce
 | App de computador | **Rust puro** com interface **Iced 0.14**, desenhada pela GPU via `wgpu` (com retorno por software). Sem WebView, Electron ou Tauri |
 | Protocolo (PC) | Crate **`nostr` 0.45** (rust-nostr) |
 | Chamadas (PC) | **webrtc-rs**, o mesmo transporte do celular. Vídeo com **libvpx** (a única parte em C) |
-| App Android | Interface web (**HTML, CSS e JavaScript** com `nostr-tools`) dentro de um **WebView**, com uma camada **Java** fina para Keystore, notificações e chamada em tela cheia |
+| Pacotes (PC) | `.exe` para Windows, `.deb` e `.tar.gz` para Linux, `.dmg` para macOS (Apple Silicon e Intel) |
+| App Android | Interface web (**HTML, CSS e JavaScript** com `nostr-tools`) dentro de um **WebView**, com uma camada **Java** fina para Keystore, notificações, chamada em tela cheia, transmissão de tela e atualização |
 | Protocolo (celular) | **Nostr** (relays públicos, sem servidor central) |
+| Build dos pacotes | **GitHub Actions** ([`.github/workflows/pc.yml`](.github/workflows/pc.yml)), para Linux e macOS |
 | Fontes | Bricolage Grotesque e Figtree |
 
 > Os testes de compatibilidade entre PC e celular estão em [`j-menseger-desktop/crates/jm-core/tests/`](j-menseger-desktop/crates/jm-core/tests/).
@@ -242,9 +297,12 @@ Os arquivos estão em **[jmenseger-site.vercel.app](https://jmenseger-site.verce
 | Área | Situação |
 |---|---|
 | Mensagens, grupos, salas de voz, soundboard, transmissão de tela, ajustes | ✅ Pronto no PC (conferido com o celular, detalhes em [`PARIDADE.md`](j-menseger-desktop/PARIDADE.md)) |
+| Instalador e desinstalador no Linux | ✅ Testados no Linux |
+| Executável e instalador do Windows | ⚠️ Gerados por compilação cruzada no Linux, **não testados num Windows** |
+| Pacote do macOS | ⚠️ Gerado pelo GitHub Actions; a documentação do projeto **não registra teste num Mac** |
+| Só no Windows | ⚠️ Ícone na bandeja, abrir ao ligar, áudio do PC na transmissão e atualização automática |
 | Enviar a câmera do computador | ❌ Não implementado |
 | Ler QR pela câmera | ❌ Não implementado |
-| Instalador e executável do Windows | ⚠️ Gerados por compilação cruzada no Linux, **não testados num Windows** |
 
 <details>
 <summary><b>Diagrama: como uma mensagem viaja</b></summary>
@@ -268,7 +326,7 @@ flowchart LR
 
 ## 📱 Permissões do Android
 
-O APK pede estas permissões (lidas do `AndroidManifest.xml`). As finalidades marcadas com ⚙️ são inferidas do nome da permissão, então confira antes de publicar.
+O APK pede estas permissões (lidas do `AndroidManifest.xml` da versão 0.7.0 beta). As finalidades marcadas com ⚙️ são inferidas do nome da permissão, então confira antes de publicar.
 
 | Permissão | Para que serve |
 |---|---|
@@ -276,7 +334,10 @@ O APK pede estas permissões (lidas do `AndroidManifest.xml`). As finalidades ma
 | `CAMERA` | Chamadas de vídeo |
 | `RECORD_AUDIO` | Chamadas de voz, áudios e salas de voz |
 | `POST_NOTIFICATIONS` | Avisar sobre novas mensagens e chamadas |
-| `FOREGROUND_SERVICE` (com `_CAMERA`, `_MICROPHONE`, `_REMOTE_MESSAGING`) | Manter chamadas e recebimento de mensagens ativos em segundo plano |
+| `FOREGROUND_SERVICE` (com `_CAMERA`, `_MICROPHONE`, `_REMOTE_MESSAGING`, `_MEDIA_PROJECTION`) | Manter chamadas, recebimento de mensagens e transmissão de tela ativos em segundo plano |
+| `FOREGROUND_SERVICE_MEDIA_PROJECTION` | Transmissão da tela do celular |
+| `BIND_JOB_SERVICE` | Tarefas em segundo plano para receber mensagens (`WakeJob`) |
+| `REQUEST_INSTALL_PACKAGES` | Baixar e instalar atualizações do próprio app (`Updater`) |
 | `USE_FULL_SCREEN_INTENT` ⚙️ | Mostrar a tela de chamada recebida |
 | `WAKE_LOCK`, `RECEIVE_BOOT_COMPLETED` ⚙️ | Manter o recebimento de mensagens após reinício |
 | `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS` ⚙️ | Evitar que o sistema pause o app e perca mensagens |
@@ -290,19 +351,28 @@ O APK pede estas permissões (lidas do `AndroidManifest.xml`). As finalidades ma
 ```text
 j-menseger/
 ├── README.md
-├── docs/                      # mídia deste README
-│   ├── gifs/                  # animações
-│   ├── img/                   # capturas de tela e logo
-│   └── LICENCA-sons.txt       # licenças dos sons do soundboard
-├── j-menseger-desktop/        # app de computador (Rust + Iced)
-│   ├── ARQUITETURA.md         # decisões técnicas
-│   ├── PARIDADE.md            # comparação item a item com o celular
-│   └── crates/                # jm-core, jm-app, jm-media
-├── j-menseger-android/        # app Android (WebView + Java)
-│   ├── README.md              # como montar e de onde veio o código
-│   ├── web/                   # interface web (HTML, CSS, JS)
-│   └── android/               # camada Java
-└── j-menseger-site/           # site de divulgação e downloads
+├── .github/workflows/pc.yml      # build do PC para Linux e macOS (GitHub Actions)
+├── docs/                         # mídia deste README
+│   ├── gifs/                     # animações
+│   ├── img/                      # capturas de tela e logo
+│   └── LICENCA-sons.txt          # licenças dos sons do soundboard
+├── j-menseger-desktop/           # app de computador (Rust + Iced)
+│   ├── README.md                 # como compilar e rodar
+│   ├── ARQUITETURA.md            # decisões técnicas
+│   ├── PARIDADE.md               # comparação item a item com o celular
+│   ├── crates/                   # jm-core, jm-app, jm-media
+│   ├── packaging/                # linux/, macos/ e windows/: gera os pacotes
+│   └── tools/                    # servidor de teste e ferramentas auxiliares
+├── j-menseger-android/           # app Android (WebView + Java)
+│   ├── README.md                 # como montar e de onde veio o código
+│   ├── ESTUDO-IPHONE.md          # estudo de compatibilidade com iPhone
+│   ├── web/                      # interface web (HTML, CSS, JS)
+│   ├── android/                  # camada Java
+│   └── dist/                     # APK gerado
+└── j-menseger-site/              # site de divulgação e downloads
+    ├── versao.json               # versões, tamanhos e SHA-256 dos downloads
+    ├── downloads/                # instaladores e APK
+    └── tools/gerar-versao.sh     # gera o versao.json
 ```
 
 > ℹ️ A pasta `j-menseger-android/` foi reconstruída a partir do APK 0.4.0-beta, porque o código-fonte original se perdeu. Veja o [README dela](j-menseger-android/README.md) para os detalhes.
@@ -312,7 +382,7 @@ j-menseger/
 ## 🙏 Créditos
 
 - **Fontes**: *Bricolage Grotesque* e *Figtree*, sob licença SIL Open Font License (OFL).
-- **Sons do soundboard**: amostras do **MuseScore General** (MIT, com partes em domínio público ou CC0), do **Fluid (R3) GM SoundFont** (MIT) e do **Fluid (R3) Mono GM** (Michael Cowgill). O som de "grilos" é sintetizado. Detalhes em [`assets/www/sounds/LICENCA.txt`](docs/LICENCA-sons.txt).
+- **Sons do soundboard**: amostras do **MuseScore General** (MIT, com partes em domínio público ou CC0), do **Fluid (R3) GM SoundFont** (MIT) e do **Fluid (R3) Mono GM** (Michael Cowgill). O som de "grilos" é sintetizado. Detalhes em [`docs/LICENCA-sons.txt`](docs/LICENCA-sons.txt).
 - **Protocolo**: [Nostr](https://nostr.com/).
 
 ---
@@ -325,6 +395,24 @@ j-menseger/
 <br />
 
 Não. O Windows mostra esse aviso para programas novos que ainda não têm reputação. Clique em **Mais informações** e depois em **Executar assim mesmo**.
+
+</details>
+
+<details>
+<summary><b>O macOS diz que o app não pôde ser verificado. O que faço?</b></summary>
+
+<br />
+
+É o comportamento esperado na primeira vez, porque o app não é notarizado pela Apple. Vá em **Ajustes do Sistema → Privacidade e Segurança** e clique em **Abrir Mesmo Assim**.
+
+</details>
+
+<details>
+<summary><b>Qual arquivo do Linux eu escolho?</b></summary>
+
+<br />
+
+Se você usa Ubuntu, Debian ou Mint, o `.deb` é o mais simples. Em outras distribuições, use o `.tar.gz`, que instala só para você e não precisa de `sudo`.
 
 </details>
 
@@ -342,7 +430,7 @@ Não. Sem as 12 palavras ninguém consegue recuperar a conta, nem o projeto. Gua
 
 <br />
 
-Sim. As duas versões falam a mesma língua: mensagens, chamadas, GIFs e a tela compartilhada passam de um para o outro.
+Sim. As versões falam a mesma língua: mensagens, chamadas, GIFs e a tela compartilhada passam de um para o outro.
 
 </details>
 

@@ -32,6 +32,38 @@ ambiente onde foi escrito. Esta pasta foi **reconstruída a partir do APK
 A chave de assinatura fica em `keystore/` (fora do git). **Guarde-a**: sem ela
 não dá para lançar atualizações que instalem por cima.
 
+## Novidades da 0.7.0-beta (iguais às do computador 0.6.0)
+
+- Responder e marcar como lida pela notificação (RemoteInput).
+- Arquivos até 5 MB, encaminhar, visualização única, prévia de links (busca
+  nativa em `LinkPreview.java`, sem endereços internos).
+- Poderes por cargo (fixar, apagar de outros, @todos), eventos com presença e
+  lembrete.
+- Volume por pessoa, status personalizado com Não perturbe, aparelhos
+  conectados com "Desconectar".
+- Estudo do iPhone: [ESTUDO-IPHONE.md](ESTUDO-IPHONE.md).
+
+## Novidades da 0.6.0-beta (iguais às do computador 0.5.0)
+
+- Editar mensagem, fixar mensagens na conversa, buscar na conversa, enquetes,
+  @menções (avisam mesmo com o canal silenciado), online/ausente (pode
+  esconder em Privacidade) e cargos com cor nos grupos.
+- Backup cifrado com a chave da conta (Armazenamento → Fazer backup), no mesmo
+  formato do PC: um backup do celular abre no computador e vice-versa.
+- Mesma conta no PC e no celular: quem entra com as mesmas 12 palavras recebe
+  contatos e grupos do outro aparelho sozinho.
+- Transmitir a tela do celular em chamadas e salas (MediaProjection).
+- Atualização automática: o app procura versão nova no site, baixa, confere o
+  SHA-256 e pede para instalar.
+- Notificações com o app fechado: além do serviço em segundo plano, um
+  trabalho a cada ~15 min religa a conexão se o Android a derrubar.
+- Tela piscando preta ao entrar em chamada de voz: corrigido (sensor de
+  proximidade só apaga a tela depois de 0,65 s com o rosto perto).
+
+**Não testado num aparelho de verdade** (não há um aqui): a captura de tela,
+a instalação da atualização e o trabalho periódico. A página foi testada no
+Chromium em tamanho de celular, junto com o app de computador.
+
 ## Novidades da 0.5.0-beta (iguais às do computador)
 
 Mesmo protocolo do app de computador, conferido com ele rodando de verdade no

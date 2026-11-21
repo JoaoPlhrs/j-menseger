@@ -31,10 +31,11 @@ public class Bridge {
     static final String PREFS = "jm_native";
     private final Context ctx;
     private final Handler main = new Handler(Looper.getMainLooper());
-    private PowerManager.WakeLock proximity;
+    private final ProximityGuard proximity;
 
     Bridge(Context ctx) {
         this.ctx = ctx.getApplicationContext();
+        this.proximity = new ProximityGuard(this.ctx);
     }
 
     private void ui(Runnable r) {
@@ -128,11 +129,22 @@ public class Bridge {
 
     /* ---------------- segundo plano e chamadas ---------------- */
 
+    /** A tela do app está aberta na frente? (a página roda também sem tela) */
+    @JavascriptInterface
+    public boolean foreground() {
+        return MainActivity.resumed;
+    }
+
     @JavascriptInterface
     public void setBackground(boolean on) {
         prefs().edit().putBoolean("bg", on).apply();
-        if (on) ConnService.sync(ctx);
-        else if (!ConnService.inCall) ctx.stopService(new Intent(ctx, ConnService.class));
+        if (on) {
+            ConnService.sync(ctx);
+            WakeJob.schedule(ctx);
+        } else {
+            WakeJob.cancel(ctx);
+            if (!ConnService.inCall) ctx.stopService(new Intent(ctx, ConnService.class));
+        }
     }
 
     @JavascriptInterface
@@ -185,22 +197,11 @@ public class Bridge {
     }
 
     private void acquireProximity() {
-        try {
-            if (proximity == null) {
-                PowerManager pm = (PowerManager) ctx.getSystemService(Context.POWER_SERVICE);
-                if (!pm.isWakeLockLevelSupported(PowerManager.PROXIMITY_SCREEN_OFF_WAKE_LOCK)) return;
-                proximity = pm.newWakeLock(PowerManager.PROXIMITY_SCREEN_OFF_WAKE_LOCK, "jmenseger:proximity");
-            }
-            if (!proximity.isHeld()) proximity.acquire(4 * 60 * 60 * 1000L);
-        } catch (Exception ignored) {
-        }
+        proximity.start();
     }
 
     private void releaseProximity() {
-        try {
-            if (proximity != null && proximity.isHeld()) proximity.release();
-        } catch (Exception ignored) {
-        }
+        proximity.stop();
     }
 
     /* ---------------- janela ---------------- */
@@ -355,5 +356,69 @@ public class Bridge {
         Intent i = ctx.getPackageManager().getLaunchIntentForPackage("com.spotify.music");
         if (i != null) start(i);
         else start(new Intent(Intent.ACTION_VIEW, Uri.parse("https://play.google.com/store/apps/details?id=com.spotify.music")));
+    }
+
+    /** Procura atualização; a resposta chega em JM.onUpdate. */
+    @JavascriptInterface
+    public void updateCheck() {
+        Updater.procurar(ctx);
+    }
+
+    /** Baixa e instala a atualização encontrada por updateCheck. */
+    @JavascriptInterface
+    public void updateDownload() {
+        Updater.baixar(ctx);
+    }
+
+    /** Grava um arquivo (base64) em Download/J-Menseger. Devolve onde ficou, ou "" se falhou. */
+    @JavascriptInterface
+    public String saveFile(String name, String b64) {
+        try {
+            String nome = name.replaceAll("[\\/:*?\"<>|]", "_");
+            byte[] dados = android.util.Base64.decode(b64, android.util.Base64.DEFAULT);
+            if (Build.VERSION.SDK_INT >= 29) {
+                android.content.ContentValues v = new android.content.ContentValues();
+                v.put(android.provider.MediaStore.Downloads.DISPLAY_NAME, nome);
+                v.put(android.provider.MediaStore.Downloads.MIME_TYPE, "application/octet-stream");
+                v.put(android.provider.MediaStore.Downloads.RELATIVE_PATH, android.os.Environment.DIRECTORY_DOWNLOADS + "/J-Menseger");
+                Uri u = ctx.getContentResolver().insert(android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI, v);
+                if (u == null) return "";
+                java.io.OutputStream out = ctx.getContentResolver().openOutputStream(u);
+                if (out == null) return "";
+                out.write(dados);
+                out.close();
+                return "Download/J-Menseger/" + nome;
+            }
+            java.io.File dir = new java.io.File(ctx.getExternalFilesDir(android.os.Environment.DIRECTORY_DOWNLOADS), "J-Menseger");
+            if (!dir.exists() && !dir.mkdirs()) return "";
+            java.io.File f = new java.io.File(dir, nome);
+            java.io.FileOutputStream out = new java.io.FileOutputStream(f);
+            out.write(dados);
+            out.close();
+            return f.getAbsolutePath();
+        } catch (Exception e) {
+            return "";
+        }
+    }
+
+    /** Começa a transmitir a tela do celular (o Android pede permissão). Resposta em JM.onScreen. */
+    @JavascriptInterface
+    public void screenStart() {
+        ui(() -> {
+            Activity a = act();
+            if (a == null) App.get().runJs("window.JM&&JM.onScreen&&JM.onScreen(false)");
+            else ScreenShare.ask(a);
+        });
+    }
+
+    @JavascriptInterface
+    public void screenStop() {
+        ui(ScreenShare::stop);
+    }
+
+    /** Prévia de link (este aparelho acessa o site). Resposta em JM.onLinkPreview. */
+    @JavascriptInterface
+    public void linkPreview(String id, String url) {
+        LinkPreview.fetch(id, url);
     }
 }

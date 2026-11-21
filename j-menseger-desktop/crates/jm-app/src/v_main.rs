@@ -165,11 +165,43 @@ impl Main {
             Section::Settings => crate::v_settings::sidebar(self),
         };
         let mut col = column![container(corpo).height(Length::Fill)];
+        if let Some(p) = self.update_bar() {
+            col = col.push(p);
+        }
         if let Some(p) = crate::v_call::voice_panel(self) {
             col = col.push(p);
         }
         col = col.push(self.user_panel());
         container(col).width(SIDEBAR_W).height(Length::Fill).style(t::fill(t::sidebar())).into()
+    }
+
+    /// Aviso de versão nova, em cima do painel do usuário.
+    fn update_bar(&self) -> Option<El<'_>> {
+        let p = self.update.as_ref()?;
+        let corpo: El<'_> = match &self.update_prog {
+            Some(pr) => {
+                let v = pr.load(std::sync::atomic::Ordering::Relaxed) as f32 / 10.0;
+                column![
+                    text(format!("Baixando a versão {}… {:.0}%", p.versao, v)).size(13).color(t::FG),
+                    iced::widget::progress_bar(0.0..=100.0, v).girth(4),
+                ]
+                .spacing(6)
+                .into()
+            }
+            None => row![
+                column![
+                    text(format!("Versão {} disponível", p.versao)).size(13.5).font(SEMI).color(t::FG),
+                    text(if p.novidades.is_empty() { "Instala por cima, sem perder nada".to_string() } else { ui::ellipsis(&p.novidades, 60) }).size(11.5).color(t::FG_DIM),
+                ]
+                .spacing(1)
+                .width(Length::Fill),
+                ui::primary(Some(Icon::Download), "Atualizar", Some(Msg::UpdateStart)),
+            ]
+            .spacing(8)
+            .align_y(Alignment::Center)
+            .into(),
+        };
+        Some(container(corpo).padding([10, 12]).style(t::fill(t::mix(t::sidebar(), t::accent(), 0.12))).into())
     }
 
     fn user_panel(&self) -> El<'_> {
@@ -180,9 +212,15 @@ impl Main {
         } else {
             (t::WARN, "Conectando…".to_string())
         };
+        let meu = self.me.status.as_ref().and_then(|x| x.clean(jm_core::engine::now_ms()));
+        let (cor, estado) = match &meu {
+            Some(s) if s.dnd => (t::DANGER, if s.t.is_empty() { "Não perturbe".to_string() } else { format!("{} {}", s.e, s.t).trim().to_string() }),
+            Some(s) if !s.t.is_empty() || !s.e.is_empty() => (cor, format!("{} {}", s.e, s.t).trim().to_string()),
+            _ => (cor, estado),
+        };
         let info = column![
             text(ui::ellipsis(&self.me.name, 22)).size(14).font(SEMI).color(t::FG),
-            row![container(Space::new()).width(7).height(7).style(t::rounded(cor, 4.0)), text(estado).size(11.5).wrapping(iced::widget::text::Wrapping::None).color(t::FG_DIM)]
+            row![container(Space::new()).width(7).height(7).style(t::rounded(cor, 4.0)), text(ui::ellipsis(&estado, 24)).size(11.5).wrapping(iced::widget::text::Wrapping::None).color(t::FG_DIM)]
                 .spacing(6)
                 .align_y(Alignment::Center),
         ]
@@ -199,6 +237,7 @@ impl Main {
             let mudo = self.call.as_ref().map(|c| c.muted).or(self.room.as_ref().map(|r| r.muted)).unwrap_or(false);
             r = r.push(ui::icon_button(if mudo { Icon::MicOff } else { Icon::Mic }, if mudo { "Ligar microfone" } else { "Desligar microfone" }, Some(Msg::ToggleMute), mudo));
         }
+        r = r.push(ui::icon_button(Icon::Smile, "Definir status", Some(Msg::OpenSetStatus), meu.is_some()));
         r = r.push(ui::icon_button(Icon::Settings, "Ajustes", Some(Msg::Go(Section::Settings)), false));
         container(r).padding([8, 8]).style(t::fill(t::mix(t::sidebar(), Color::BLACK, 0.25))).into()
     }
@@ -547,7 +586,13 @@ impl Main {
                 let c = self.summary(key);
                 let fixada = c.is_some_and(|c| c.pinned);
                 let muda = c.is_some_and(|c| c.muted);
-                let mut v = vec![
+                let aberta = self.chat.as_ref().is_some_and(|c| &c.key == key);
+                let mut v = Vec::new();
+                if aberta {
+                    v.push(ui::menu_item(Icon::Eye, "Buscar na conversa", Msg::OpenSearch, false));
+                    v.push(ui::menu_item(Icon::Pin, "Mensagens fixadas", Msg::OpenPins, false));
+                }
+                v.extend([
                     ui::menu_item(Icon::Pin, if fixada { "Desafixar" } else { "Fixar no topo" }, Msg::PinChat(key.clone(), !fixada), false),
                     ui::menu_item(
                         if muda { Icon::Bell } else { Icon::BellOff },
@@ -555,7 +600,7 @@ impl Main {
                         Msg::MuteChat(key.clone(), !muda),
                         false,
                     ),
-                ];
+                ]);
                 if c.is_some_and(|c| c.unread > 0) {
                     v.push(ui::menu_item(Icon::Checks, "Marcar como lida", Msg::MarkRead(key.clone()), false));
                 }
@@ -576,6 +621,7 @@ impl Main {
                 vec![
                     ui::menu_item(Icon::Info, "Dados do grupo", Msg::OpenGroupInfo(lid.clone()), false),
                     ui::menu_item(Icon::UserPlus, "Convidar pessoas", Msg::OpenInvite(lid.clone()), false),
+                    ui::menu_item(Icon::Sparkle, "Cargos", Msg::OpenRoles(lid.clone()), false),
                     ui::menu_item(
                         if muda { Icon::Bell } else { Icon::BellOff },
                         if muda { "Ativar notificações" } else { "Silenciar grupo" },
@@ -605,6 +651,9 @@ impl Main {
                         )),
                     }
                     if let Some(g) = self.group(lid) {
+                        if g.meta.is_admin(&me) {
+                            v.push(ui::menu_item(Icon::Sparkle, "Cargos…", Msg::OpenMemberRoles(lid.clone(), pk.clone()), false));
+                        }
                         if g.meta.is_admin(&me) && g.meta.owner != *pk {
                             let admin = g.meta.is_admin(pk);
                             v.push(ui::menu_item(
@@ -659,7 +708,30 @@ impl Main {
             v.push(ui::menu_item(Icon::Reply, "Responder", Msg::Reply(m.id.clone()), false));
         }
         if let MessageBody::Text(txt) = &m.body {
+            if m.from_me && self.can_write(&c.key) {
+                v.push(ui::menu_item(Icon::Edit, "Editar", Msg::EditStart(m.id.clone()), false));
+            }
             v.push(ui::menu_item(Icon::Copy, "Copiar texto", Msg::Copy(txt.clone()), false));
+        }
+        let pode_encaminhar = match &m.body {
+            MessageBody::Text(_) | MessageBody::Sound { .. } => true,
+            MessageBody::Media(x) => !x.vo && x.ready,
+            _ => false,
+        };
+        if pode_encaminhar {
+            v.push(ui::menu_item(Icon::Share, "Encaminhar", Msg::OpenForward(m.id.clone()), false));
+        }
+        if let MessageBody::Media(x) = &m.body {
+            if x.kind == jm_core::messages::MediaKind::File && x.ready {
+                v.push(ui::menu_item(Icon::Download, "Salvar arquivo", Msg::SaveFile(x.mid.clone(), x.name.clone().unwrap_or_else(|| "arquivo".into())), false));
+            }
+        }
+        if matches!(m.body, MessageBody::Poll { .. }) {
+            v.push(ui::menu_item(Icon::Users, "Ver quem votou", Msg::OpenVoters(m.id.clone()), false));
+        }
+        if !apagada && !m.body.is_system() && self.can_pin(&c.key) {
+            let fixada = c.pins.contains(&m.id);
+            v.push(ui::menu_item(Icon::Pin, if fixada { "Desafixar" } else { "Fixar na conversa" }, Msg::PinMsg(m.id.clone(), !fixada), false));
         }
         if let MessageBody::Media(x) = &m.body {
             if x.ready && x.kind == jm_core::messages::MediaKind::Image {
@@ -670,6 +742,20 @@ impl Main {
             v.push(ui::menu_item(Icon::Trash, "Apagar…", Msg::AskDelete(m.id.clone()), true));
         }
         v
+    }
+
+    /// Pode fixar mensagens: em conversa a dois, sempre; em grupo, admins e
+    /// cargos com esse poder.
+    pub fn can_pin(&self, key: &str) -> bool {
+        match key.strip_prefix("g:").and_then(|r| r.split(':').next()) {
+            Some(lid) => self.group(lid).is_some_and(|g| g.meta.can(&self.me_pk(), "pin")),
+            None => self.can_write(key),
+        }
+    }
+
+    /// Pode apagar mensagens dos outros (grupo, admin ou cargo com "del").
+    pub fn can_moderate(&self, key: &str) -> bool {
+        key.strip_prefix("g:").and_then(|r| r.split(':').next()).and_then(|lid| self.group(lid)).is_some_and(|g| g.meta.can(&self.me_pk(), "del"))
     }
 
     /// A pessoa pode escrever nesta conversa (contato aceito ou canal de grupo).

@@ -16,6 +16,8 @@ public class ConnService extends Service {
     static volatile boolean running;
     static volatile boolean inCall;
     static volatile boolean callVideo;
+    /** Transmitindo a tela do celular (precisa do tipo "projeção de mídia"). */
+    static volatile boolean screen;
 
     static void sync(Context c) {
         Intent i = new Intent(c, ConnService.class);
@@ -40,8 +42,12 @@ public class ConnService extends Service {
                 tipo |= ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE;
                 if (callVideo) tipo |= ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA;
             }
+            if (screen) tipo |= ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION;
         } else if (Build.VERSION.SDK_INT >= 30 && inCall) {
             tipo = ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE | (callVideo ? ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA : 0);
+            if (screen) tipo |= ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION;
+        } else if (Build.VERSION.SDK_INT >= 29 && screen) {
+            tipo = ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION;
         }
         try {
             if (Build.VERSION.SDK_INT >= 29 && tipo != 0) startForeground(Notifier.ID_CONN, Notifier.ongoing(this, inCall, callVideo), tipo);

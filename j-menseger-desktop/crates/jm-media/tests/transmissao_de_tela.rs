@@ -103,29 +103,27 @@ async fn a_tela_capturada_chega_comprimida_do_outro_lado() {
     let mut enc = VideoEncoder::new(reduzido.width, reduzido.height, Quality::P720, Fps::Fps30)
         .expect("codificador não preparou");
 
-    let envio = tokio::spawn(async move {
-        let mut enviados = 0usize;
-        let mut bytes = 0usize;
-        let cap = match screen::Capturer::open(&tela) {
-            Ok(c) => c,
-            Err(_) => return (ana, 0, 0),
-        };
+    // O capturador não pode trocar de thread (no Windows é assim, e o app
+    // captura numa thread própria): captura e comprime aqui, manda depois.
+    let mut pacotes_prontos: Vec<Vec<u8>> = Vec::new();
+    if let Ok(cap) = screen::Capturer::open(&tela) {
         for i in 0..20 {
             let Ok(q) = cap.grab() else { break };
             let p = q.scale_to_height(Quality::P720.height());
             let Ok(pacotes) = enc.encode(&p.rgba, i == 0) else { break };
-            for pkt in pacotes {
-                bytes += pkt.data.len();
-                if ana
-                    .send_video(&pkt.data, Duration::from_millis(33))
-                    .await
-                    .is_err()
-                {
-                    return (ana, enviados, bytes);
-                }
-                enviados += 1;
+            pacotes_prontos.extend(pacotes.into_iter().map(|p| p.data));
+        }
+    }
+    let envio = tokio::spawn(async move {
+        let mut enviados = 0usize;
+        let mut bytes = 0usize;
+        for dados in pacotes_prontos {
+            bytes += dados.len();
+            if ana.send_video(&dados, Duration::from_millis(33)).await.is_err() {
+                return (ana, enviados, bytes);
             }
-            tokio::time::sleep(Duration::from_millis(33)).await;
+            enviados += 1;
+            tokio::time::sleep(Duration::from_millis(20)).await;
         }
         (ana, enviados, bytes)
     });

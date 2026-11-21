@@ -114,7 +114,13 @@ pub fn view<'a>(m: &'a Main, modal: &'a Modal) -> El<'a> {
                 container(image(m.anim_frame(PREVIA_GIF).filter(|_| is_gif_mime(&d.mime)).unwrap_or_else(|| d.handle.clone())).content_fit(ContentFit::Contain).width(Length::Fill).height(Length::Fixed((m.size.height - 320.0).clamp(160.0, 420.0))))
                     .style(t::rounded(Color::BLACK, 10.0)),
                 text(format!("{}×{} · {}", d.w, d.h, t::bytes_label(d.bytes.len() as i64))).size(12.5).color(t::FG_DIM),
-                row![ui::fill(), ui::ghost(None, "Cancelar", Some(Msg::Key(Key::Escape))), ui::primary(Some(Icon::Send), "Enviar", Some(Msg::SendPhoto))].spacing(8),
+                row![
+                    if is_gif_mime(&d.mime) { El::from(Space::new()) } else { ui::secondary(Some(Icon::Eye), "Visualização única", Some(Msg::SendPhotoOnce)).into() },
+                    ui::fill(),
+                    ui::ghost(None, "Cancelar", Some(Msg::Key(Key::Escape))),
+                    ui::primary(Some(Icon::Send), "Enviar", Some(Msg::SendPhoto))
+                ]
+                .spacing(8),
             ]
             .spacing(12)
             .into(),
@@ -161,7 +167,401 @@ pub fn view<'a>(m: &'a Main, modal: &'a Modal) -> El<'a> {
         ),
         Modal::Share { sources } => share(m, sources),
         Modal::Crop(c) => crop(m, c),
+        Modal::Search { all, query } => search(m, all, query),
+        Modal::Forward { query, .. } => forward(m, query),
+        Modal::SetStatus { e, t: txt, dnd, dur } => {
+            let duracoes = row([(0u8, "Não limpar"), (1, "1 hora"), (2, "4 horas"), (3, "Hoje")]
+                .into_iter()
+                .map(|(k, n)| button(text(n).size(13)).padding([6, 10]).style(t::option(*dur == k)).on_press(Msg::StatusDur(k)).into())
+                .collect::<Vec<El<'a>>>())
+            .spacing(6);
+            let prontos = row([("🎮", "Jogando"), ("📚", "Estudando"), ("💼", "Trabalhando"), ("🌙", "Dormindo")]
+                .into_iter()
+                .map(|(em, tx)| button(text(format!("{em} {tx}")).size(13)).padding([6, 10]).style(t::option(false)).on_press(Msg::StatusField(2, format!("{em}|{tx}"))).into())
+                .collect::<Vec<El<'a>>>())
+            .spacing(6);
+            card(
+                460.0,
+                column![
+                    head("Definir status", Some("Aparece para os seus contatos, junto com a música do Spotify.")),
+                    row![
+                        iced::widget::text_input("🎮", e).on_input(|v| Msg::StatusField(0, v)).padding([10, 10]).size(16).width(56).style(t::input),
+                        iced::widget::text_input("Ex.: Jogando Valorant", txt).on_input(|v| Msg::StatusField(1, v)).on_submit(Msg::StatusSave(false)).padding([10, 12]).size(14.5).style(t::input),
+                    ]
+                    .spacing(8),
+                    prontos,
+                    row![
+                        column![text("Não perturbe").size(14).color(t::FG), text("Sem som nem aviso de mensagem. Os outros veem que você não quer ser incomodado.").size(12).color(t::FG_DIM)]
+                            .spacing(2)
+                            .width(Length::Fill),
+                        toggler(*dnd).on_toggle(Msg::StatusDnd).size(20)
+                    ]
+                    .spacing(10)
+                    .align_y(Alignment::Center),
+                    ui::field("Limpar depois de", duracoes),
+                    row![ui::ghost(None, "Tirar status", Some(Msg::StatusSave(true))), ui::fill(), ui::primary(Some(Icon::Check), "Salvar", Some(Msg::StatusSave(false)))].spacing(8),
+                ]
+                .spacing(12)
+                .into(),
+            )
+        }
+        Modal::PeerVolume { pk, v } => card(
+            380.0,
+            column![
+                head(&format!("Volume de {}", m.name_of(pk)), Some("Só muda o que você ouve. Fica guardado para as próximas chamadas.")),
+                row![
+                    icon(Icon::Volume, 18.0, t::FG_DIM),
+                    iced::widget::slider(0.0..=2.0, *v, Msg::PeerVolume).step(0.05_f32).width(Length::Fill),
+                    text(format!("{:.0}%", v * 100.0)).size(14).font(SEMI).color(t::FG).width(48)
+                ]
+                .spacing(10)
+                .align_y(Alignment::Center),
+                row![ui::ghost(None, "Voltar ao normal", Some(Msg::PeerVolume(1.0))), ui::fill(), ui::primary(None, "Pronto", Some(Msg::Key(Key::Escape)))].spacing(8),
+            ]
+            .spacing(14)
+            .into(),
+        ),
+        Modal::NewEvent { title, date, time, desc } => card(
+            440.0,
+            column![
+                head("Novo evento", Some("Todos da conversa podem responder Vou, Talvez ou Não vou. Quem vai recebe um lembrete 15 minutos antes.")),
+                ui::field("Nome", iced::widget::text_input("Ex.: Jogatina de sábado", title).on_input(|v| Msg::EventField(0, v)).padding([10, 12]).size(14.5).style(t::input)),
+                row![
+                    ui::field("Data", iced::widget::text_input("23/11/2026", date).on_input(|v| Msg::EventField(1, v)).padding([10, 12]).size(14.5).style(t::input)),
+                    ui::field("Hora", iced::widget::text_input("20:00", time).on_input(|v| Msg::EventField(2, v)).padding([10, 12]).size(14.5).style(t::input)),
+                ]
+                .spacing(10),
+                ui::field("Descrição (opcional)", iced::widget::text_input("Onde, o que levar…", desc).on_input(|v| Msg::EventField(3, v)).padding([10, 12]).size(14.5).style(t::input)),
+                row![ui::fill(), ui::ghost(None, "Cancelar", Some(Msg::Key(Key::Escape))), ui::primary(Some(Icon::Send), "Criar evento", Some(Msg::EventSend))].spacing(8),
+            ]
+            .spacing(12)
+            .into(),
+        ),
+        Modal::ViewOnce { handle } => card(
+            640.0,
+            column![
+                head("Visualização única", Some("Ao fechar, a foto some deste aparelho.")),
+                container(image(handle.clone()).content_fit(ContentFit::Contain).width(Length::Fill).height(Length::Fixed((m.size.height - 240.0).clamp(200.0, 560.0))))
+                    .style(t::rounded(Color::BLACK, 10.0)),
+            ]
+            .spacing(12)
+            .into(),
+        ),
+        Modal::Pins { list } => pins(m, list),
+        Modal::NewPoll { q, opts, multi } => new_poll(q, opts, *multi),
+        Modal::Voters { id } => voters(m, id),
+        Modal::Roles { lid, form } => roles(m, lid, form.as_ref()),
+        Modal::MemberRoles { lid, pk } => member_roles(m, lid, pk),
     }
+}
+
+pub const SEARCH_ID: &str = "busca-conversa";
+
+fn forward<'a>(m: &'a Main, query: &'a str) -> El<'a> {
+    let q = sem_acento(query.trim());
+    let mut col = column![].spacing(2);
+    let mut n = 0;
+    for c in &m.chats {
+        let titulo = match c.key.strip_prefix("g:").and_then(|r| r.split(':').next()).and_then(|lid| m.group(lid)) {
+            Some(g) => format!("{} · {}", m.chat_title(&c.key), g.meta.name),
+            None => m.chat_title(&c.key),
+        };
+        if !q.is_empty() && !sem_acento(&titulo).contains(&q) {
+            continue;
+        }
+        if let Some(pk) = &c.peer {
+            if m.contact_status(pk) != Some(ContactStatus::Ok) {
+                continue;
+            }
+        }
+        n += 1;
+        if n > 60 {
+            break;
+        }
+        let ic = if c.is_group { Icon::Hash } else { Icon::User };
+        col = col.push(
+            button(row![icon(ic, 16.0, t::FG_DIM), text(titulo).size(14.5).color(t::FG)].spacing(10).align_y(Alignment::Center))
+                .padding([9, 10])
+                .width(Length::Fill)
+                .style(t::row_item(false))
+                .on_press(Msg::ForwardTo(c.key.clone())),
+        );
+    }
+    if n == 0 {
+        col = col.push(ui::note("Nenhuma conversa encontrada."));
+    }
+    card(
+        440.0,
+        column![
+            head("Encaminhar para…", None),
+            iced::widget::text_input("Buscar conversa", query).on_input(Msg::ForwardQuery).padding([10, 12]).size(14.5).style(t::input),
+            limited(m, col.into()),
+        ]
+        .spacing(12)
+        .into(),
+    )
+}
+pub const ROLE_NAME_ID: &str = "nome-cargo";
+
+fn sem_acento(s: &str) -> String {
+    s.to_lowercase()
+        .chars()
+        .map(|c| match c {
+            'á' | 'à' | 'â' | 'ã' | 'ä' => 'a',
+            'é' | 'è' | 'ê' | 'ë' => 'e',
+            'í' | 'ì' | 'î' | 'ï' => 'i',
+            'ó' | 'ò' | 'ô' | 'õ' | 'ö' => 'o',
+            'ú' | 'ù' | 'û' | 'ü' => 'u',
+            'ç' => 'c',
+            x => x,
+        })
+        .collect()
+}
+
+fn quem<'a>(m: &Main, msg: &jm_core::engine::Message) -> String {
+    if msg.from_me {
+        "Você".into()
+    } else {
+        m.name_of(&msg.author)
+    }
+}
+
+fn search<'a>(m: &'a Main, all: &'a [jm_core::engine::Message], query: &'a str) -> El<'a> {
+    let q = sem_acento(query.trim());
+    let mut lista = column![].spacing(2);
+    if q.chars().count() < 2 {
+        lista = lista.push(ui::note(format!("{} mensagens de texto neste computador. Digite pelo menos 2 letras.", all.len())));
+    } else {
+        let achadas: Vec<&jm_core::engine::Message> = all
+            .iter()
+            .rev()
+            .filter(|x| match &x.body {
+                jm_core::engine::MessageBody::Text(t) => sem_acento(t).contains(&q),
+                jm_core::engine::MessageBody::Poll { q: p, .. } => sem_acento(p).contains(&q),
+                _ => false,
+            })
+            .take(60)
+            .collect();
+        if achadas.is_empty() {
+            lista = lista.push(ui::note("Nada encontrado."));
+        }
+        for x in achadas {
+            let texto = match &x.body {
+                jm_core::engine::MessageBody::Text(t) => t.clone(),
+                jm_core::engine::MessageBody::Poll { q, .. } => format!("Enquete: {q}"),
+                _ => String::new(),
+            };
+            // Mostra um trecho em volta do que foi achado.
+            let pos = sem_acento(&texto).find(&q).unwrap_or(0);
+            let ini = texto.char_indices().map(|(i, _)| i).filter(|i| *i <= pos).rev().nth(30).unwrap_or(0);
+            let trecho: String = texto[ini..].chars().take(140).collect();
+            lista = lista.push(
+                button(
+                    column![
+                        row![
+                            text(quem(m, x)).size(13).font(SEMI).color(t::FG),
+                            text(format!("{} {}", t::day_label(x.ts), t::hhmm(x.ts))).size(12).color(t::FG_FAINT)
+                        ]
+                        .spacing(8),
+                        text(format!("{}{}", if ini > 0 { "…" } else { "" }, trecho)).size(13.5).color(t::FG_DIM)
+                    ]
+                    .spacing(2),
+                )
+                .padding([8, 10])
+                .width(Length::Fill)
+                .style(t::row_item(false))
+                .on_press(Msg::JumpTo(x.id.clone())),
+            );
+        }
+    }
+    card(
+        520.0,
+        column![
+            head("Buscar na conversa", None),
+            iced::widget::text_input("Digite uma palavra", query).id(SEARCH_ID).on_input(Msg::SearchInput).padding([10, 12]).size(14.5).style(t::input),
+            limited(m, lista.into()),
+        ]
+        .spacing(12)
+        .into(),
+    )
+}
+
+fn pins<'a>(m: &'a Main, list: &'a [jm_core::engine::Message]) -> El<'a> {
+    let pode = m.chat.as_ref().is_some_and(|c| m.can_pin(&c.key));
+    let mut col = column![].spacing(4);
+    if list.is_empty() {
+        col = col.push(ui::note("Nenhuma mensagem fixada. Clique com o botão direito numa mensagem e escolha “Fixar na conversa”."));
+    }
+    for x in list {
+        let mut r = row![button(
+            column![text(quem(m, x)).size(13).font(SEMI).color(t::FG), text(ui::ellipsis(&m.engine.preview(x), 160)).size(13.5).color(t::FG_DIM)].spacing(2)
+        )
+        .padding([8, 10])
+        .width(Length::Fill)
+        .style(t::row_item(false))
+        .on_press(Msg::JumpTo(x.id.clone()))]
+        .spacing(4)
+        .align_y(Alignment::Center);
+        if pode {
+            r = r.push(ui::icon_button_sm(Icon::X, "Desafixar", Some(Msg::PinMsg(x.id.clone(), false))));
+        }
+        col = col.push(r);
+    }
+    card(480.0, column![head("Mensagens fixadas", None), limited(m, col.into())].spacing(12).into())
+}
+
+fn new_poll<'a>(q: &'a str, opts: &'a [String], multi: bool) -> El<'a> {
+    let mut lista = column![].spacing(6);
+    for (i, o) in opts.iter().enumerate() {
+        let mut r = row![iced::widget::text_input(&format!("Opção {}", i + 1), o)
+            .on_input(move |v| Msg::PollOpt(i, v))
+            .padding([10, 12])
+            .size(14.5)
+            .style(t::input)]
+        .spacing(4)
+        .align_y(Alignment::Center);
+        if opts.len() > 2 {
+            r = r.push(ui::icon_button_sm(Icon::X, "Tirar opção", Some(Msg::PollDelOpt(i))));
+        }
+        lista = lista.push(r);
+    }
+    if opts.len() < 10 {
+        lista = lista.push(ui::ghost(Some(Icon::Plus), "Adicionar opção", Some(Msg::PollAddOpt)));
+    }
+    card(
+        460.0,
+        column![
+            head("Nova enquete", None),
+            ui::field("Pergunta", ui::input("Ex.: Que dia fica melhor?", q, Msg::PollQ)),
+            ui::field("Opções", lista),
+            row![text("Permitir mais de uma resposta").size(14).color(t::FG).width(Length::Fill), toggler(multi).on_toggle(Msg::PollMulti).size(20)]
+                .align_y(Alignment::Center),
+            row![ui::fill(), ui::ghost(None, "Cancelar", Some(Msg::Key(Key::Escape))), ui::primary(Some(Icon::Send), "Enviar enquete", Some(Msg::PollSend))].spacing(8),
+        ]
+        .spacing(12)
+        .into(),
+    )
+}
+
+fn voters<'a>(m: &'a Main, id: &'a str) -> El<'a> {
+    let msg = m.chat.as_ref().and_then(|c| c.messages.iter().find(|x| x.id == id).cloned()).or_else(|| m.engine.message(id));
+    let Some(jm_core::engine::Message { body: jm_core::engine::MessageBody::Poll { q, o, votes, .. }, .. }) = msg else {
+        return card(400.0, column![head("Votos", None), ui::note("Enquete indisponível.")].spacing(12).into());
+    };
+    let me = m.me_pk();
+    let mut col = column![].spacing(6);
+    for (i, opcao) in o.iter().enumerate() {
+        let quem: Vec<&String> = votes.iter().filter(|(_, v)| v.contains(&(i as u8))).map(|(pk, _)| pk).collect();
+        col = col.push(text(format!("{opcao} · {}", quem.len())).size(13).font(BOLD).color(t::FG_DIM));
+        if quem.is_empty() {
+            col = col.push(text("Ninguém ainda").size(13).color(t::FG_FAINT));
+        }
+        for pk in quem {
+            let nome = if *pk == me { "Você".to_string() } else { m.name_of(pk) };
+            col = col.push(row![ui::avatar(&nome, m.tone_of(pk), m.pic_of(pk), 24.0), text(nome).size(14).color(t::FG)].spacing(8).align_y(Alignment::Center));
+        }
+        col = col.push(ui::vspace(6.0));
+    }
+    card(420.0, column![head(&q, None), limited(m, col.into())].spacing(12).into())
+}
+
+fn cor_cargo(c: u8) -> Color {
+    let (r, g, b) = jm_core::groups::ROLE_CORES[(c % 8) as usize];
+    Color::from_rgb8(r, g, b)
+}
+
+fn roles<'a>(m: &'a Main, lid: &'a str, form: Option<&'a RoleForm>) -> El<'a> {
+    let Some(g) = m.group(lid) else { return Space::new().into() };
+    let admin = g.meta.is_admin(&m.me_pk());
+    if let Some(f) = form {
+        let mut cores = row![].spacing(8);
+        for c in 0..8u8 {
+            let sel = f.c == c;
+            cores = cores.push(
+                button(Space::new().width(26).height(26))
+                    .padding(0)
+                    .style(move |_, _| iced::widget::button::Style {
+                        background: Some(iced::Background::Color(cor_cargo(c))),
+                        border: iced::Border { color: if sel { t::FG } else { Color::TRANSPARENT }, width: 3.0, radius: 999.0.into() },
+                        ..Default::default()
+                    })
+                    .on_press(Msg::RoleColor(c)),
+            );
+        }
+        let mut botoes = row![].spacing(8);
+        if let Some(id) = &f.id {
+            botoes = botoes.push(ui::danger_text(Some(Icon::Trash), "Apagar cargo", Some(Msg::RoleDelete(id.clone()))));
+        }
+        botoes = botoes.push(ui::fill()).push(ui::ghost(None, "Voltar", Some(Msg::OpenRoles(lid.to_string())))).push(ui::primary(Some(Icon::Check), "Salvar", Some(Msg::RoleSave)));
+        return card(
+            420.0,
+            column![
+                head(if f.id.is_some() { "Editar cargo" } else { "Novo cargo" }, None),
+                ui::field("Nome", ui::input("Ex.: Moderador", &f.name, Msg::RoleName).id(ROLE_NAME_ID).on_submit(Msg::RoleSave)),
+                ui::field("Cor", cores),
+                ui::field("Poderes", {
+                    let mut c = column![].spacing(6);
+                    for (k, rotulo) in jm_core::groups::PERMS {
+                        let on = f.p.iter().any(|x| x == k);
+                        c = c.push(row![text(rotulo).size(14).color(t::FG).width(Length::Fill), toggler(on).on_toggle(move |v| Msg::RolePerm(k.to_string(), v)).size(20)].align_y(Alignment::Center));
+                    }
+                    c.push(text("Mudar canais, membros e cargos continua só com admins.").size(12).color(t::FG_DIM))
+                }),
+                botoes,
+            ]
+            .spacing(14)
+            .into(),
+        );
+    }
+    let mut col = column![].spacing(2);
+    if g.meta.roles.is_empty() {
+        col = col.push(ui::note("Nenhum cargo ainda."));
+    }
+    for r in &g.meta.roles {
+        let n = g.meta.mroles.values().filter(|v| v.contains(&r.id)).count();
+        let linha = row![
+            container(Space::new()).width(14).height(14).style(t::rounded(cor_cargo(r.c), 7.0)),
+            text(r.n.clone()).size(14.5).font(SEMI).color(cor_cargo(r.c)).width(Length::Fill),
+            text(format!("{n} {}", if n == 1 { "pessoa" } else { "pessoas" })).size(12.5).color(t::FG_DIM)
+        ]
+        .spacing(10)
+        .align_y(Alignment::Center);
+        let b = button(linha).padding([9, 10]).width(Length::Fill).style(t::row_item(false));
+        col = col.push(if admin { b.on_press(Msg::RoleForm(Some(r.id.clone()))) } else { b });
+    }
+    let mut corpo = column![
+        head("Cargos", Some(if admin { "Cargos dão nome e cor às pessoas do grupo. Para dar um cargo, clique com o botão direito na pessoa." } else { "Só admins criam e dão cargos." })),
+        limited(m, col.into())
+    ]
+    .spacing(12);
+    if admin && g.meta.roles.len() < jm_core::groups::MAX_ROLES {
+        corpo = corpo.push(row![ui::fill(), ui::primary(Some(Icon::Plus), "Novo cargo", Some(Msg::RoleForm(None)))]);
+    }
+    card(440.0, corpo.into())
+}
+
+fn member_roles<'a>(m: &'a Main, lid: &'a str, pk: &'a str) -> El<'a> {
+    let Some(g) = m.group(lid) else { return Space::new().into() };
+    let tem: Vec<String> = g.meta.mroles.get(pk).cloned().unwrap_or_default();
+    let mut col = column![].spacing(4);
+    if g.meta.roles.is_empty() {
+        col = col.push(ui::note("O grupo ainda não tem cargos."));
+        col = col.push(row![ui::fill(), ui::primary(Some(Icon::Plus), "Criar cargo", Some(Msg::OpenRoles(lid.to_string())))]);
+    }
+    for r in &g.meta.roles {
+        let on = tem.contains(&r.id);
+        col = col.push(
+            row![
+                container(Space::new()).width(12).height(12).style(t::rounded(cor_cargo(r.c), 6.0)),
+                text(r.n.clone()).size(14.5).color(t::FG).width(Length::Fill),
+                toggler(on).on_toggle(move |v| Msg::RoleToggle(lid.to_string(), pk.to_string(), r.id.clone(), v)).size(20)
+            ]
+            .spacing(10)
+            .align_y(Alignment::Center)
+            .padding([6, 4]),
+        );
+    }
+    card(400.0, column![head(&format!("Cargos de {}", m.name_of(pk)), Some("Até 4 cargos por pessoa.")), limited(m, col.into())].spacing(12).into())
 }
 
 fn tile_button<'a>(i: Icon, label: &str, msg: Msg) -> El<'a> {
@@ -915,6 +1315,23 @@ fn share<'a>(m: &'a Main, sources: &'a [jm_media::screen::Source]) -> El<'a> {
         column![
             head("Transmitir a tela", Some("Quem está na chamada vê o que você escolher. Funciona com o celular e com outro computador.")),
             row![text("Qualidade").size(13).color(t::FG_DIM), qualidades].spacing(12).align_y(Alignment::Center),
+            if jm_media::sysaudio::supported() {
+                El::from(
+                    row![
+                        column![
+                            text("Mandar o áudio do PC").size(14).color(t::FG),
+                            text("Som do jogo ou do vídeo. O som do J-Menseger não vai junto (ninguém ouve a própria voz de volta).").size(12).color(t::FG_DIM)
+                        ]
+                        .spacing(2)
+                        .width(Length::Fill),
+                        toggler(m.share_audio).on_toggle(Msg::ShareAudio).size(20)
+                    ]
+                    .spacing(10)
+                    .align_y(Alignment::Center),
+                )
+            } else {
+                text("Áudio do PC na transmissão: por enquanto só no Windows 10 (2004) ou mais novo.").size(12).color(t::FG_DIM).into()
+            },
             limited(m, lista.into()),
         ]
         .spacing(12)

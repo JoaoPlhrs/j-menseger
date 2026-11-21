@@ -43,6 +43,7 @@ pub enum SettingsPage {
     About,
     Audio,
     Gifs,
+    Devices,
 }
 
 /// GIF aberto em quadros, pronto para animar na tela.
@@ -137,6 +138,8 @@ pub enum Toggle {
     Sounds,
     LockScreenshots,
     ForceRelay,
+    Presence,
+    LinkPreviews,
 }
 
 /// Escolhas de uma lista (como o `choose` do celular).
@@ -405,6 +408,17 @@ pub enum Modal {
     EditSound { id: String, name: String, emoji: String },
     Share { sources: Vec<Source> },
     Crop(CropState),
+    Search { all: Vec<CoreMessage>, query: String },
+    Forward { id: String, query: String },
+    PeerVolume { pk: String, v: f32 },
+    SetStatus { e: String, t: String, dnd: bool, dur: u8 },
+    NewEvent { title: String, date: String, time: String, desc: String },
+    ViewOnce { handle: image::Handle },
+    Pins { list: Vec<CoreMessage> },
+    NewPoll { q: String, opts: Vec<String>, multi: bool },
+    Voters { id: String },
+    Roles { lid: String, form: Option<RoleForm> },
+    MemberRoles { lid: String, pk: String },
 }
 
 /// Menu de contexto (botão direito), na posição do ponteiro.
@@ -430,6 +444,20 @@ pub struct OpenChat {
     pub editor: text_editor::Content,
     pub reply: Option<String>,
     pub progress: HashMap<String, (u32, u32)>,
+    /// Mensagem sendo editada (o texto dela vai para o campo).
+    pub edit: Option<String>,
+    /// Mensagens fixadas (a mais recente primeiro).
+    pub pins: Vec<String>,
+}
+
+/// Formulário de cargo (novo quando `id` é `None`).
+#[derive(Debug, Clone, Default)]
+pub struct RoleForm {
+    pub id: Option<String>,
+    pub name: String,
+    pub c: u8,
+    /// Poderes marcados.
+    pub p: Vec<String>,
 }
 
 pub const PAGE: usize = 60;
@@ -498,7 +526,37 @@ pub struct Main {
     pub room: Option<RoomInfo>,
     pub joining_room: bool,
     pub remote_frame: Option<(u64, image::Handle)>,
+    /// Última imagem de cada pessoa da sala que está mandando vídeo.
+    pub room_frames: HashMap<String, (u64, image::Handle)>,
+    /// Sua câmera, pequena (versão, imagem).
+    pub local_preview: Option<(u64, image::Handle)>,
+    /// Ligar a câmera assim que a chamada de vídeo conectar.
+    pub camera_wanted: bool,
+    /// Atualização encontrada no site.
+    pub update: Option<crate::atualizar::Pacote>,
+    /// Progresso do download (milésimos), enquanto baixa.
+    pub update_prog: Option<std::sync::Arc<std::sync::atomic::AtomicU64>>,
+    pub update_msg: Option<String>,
+    pub update_at: Instant,
+    /// Último aviso de online/ausente (ausente?, quando).
+    pub pres_sent: Option<(bool, Instant)>,
+    /// Fechar a janela deixa o app na bandeja (Windows).
+    pub tray_close: bool,
+    /// Já avisou que o app continua na bandeja.
+    pub tray_told: bool,
+    /// Abre junto com o Windows.
+    pub autostart: bool,
+    /// Última conferência da sincronia com os outros aparelhos da conta.
+    pub sync_at: Instant,
+    /// Último aviso "este aparelho existe" para os outros aparelhos da conta.
+    pub dev_at: Option<Instant>,
+    /// Última conferência dos lembretes de eventos.
+    pub evt_at: Instant,
+    /// Mensagem destacada depois de pular até ela.
+    pub flash: Option<(String, Instant)>,
     pub share_quality: Quality,
+    /// Mandar também o áudio do PC ao transmitir (Windows).
+    pub share_audio: bool,
 
     pub modal: Option<Modal>,
     pub popup: Option<Popup>,
@@ -605,6 +663,22 @@ impl Main {
             room: None,
             joining_room: false,
             remote_frame: None,
+            room_frames: HashMap::new(),
+            local_preview: None,
+            camera_wanted: false,
+            update: None,
+            update_prog: None,
+            update_msg: None,
+            update_at: Instant::now() - Duration::from_secs(6 * 3600 - 8),
+            pres_sent: None,
+            tray_close: engine.ui_pref::<bool>("tray").unwrap_or(true),
+            tray_told: false,
+            autostart: crate::tray::autostart(),
+            sync_at: Instant::now() - Duration::from_secs(50),
+            evt_at: Instant::now(),
+            dev_at: None,
+            flash: None,
+            share_audio: engine.ui_pref::<bool>("share_audio").unwrap_or(true),
             share_quality: Quality::P1080,
             modal: None,
             popup: None,
@@ -933,6 +1007,27 @@ impl Main {
 
     pub fn open_relays(&self) -> usize {
         self.relays.iter().filter(|r| r.connected).count()
+    }
+
+    /// O texto menciona a pessoa (`@nome` ou `@todos`) num grupo?
+    /// `@todos` só vale de quem tem o poder (admin ou cargo com "todos").
+    pub fn mentions_me(&self, chat: &str, texto: &str, autor: &str) -> bool {
+        let Some(lid) = chat.strip_prefix("g:").and_then(|r| r.split(':').next()) else { return false };
+        let t = texto.to_lowercase();
+        if (t.contains("@todos") || t.contains("@everyone")) && self.group(lid).is_some_and(|g| g.meta.can(autor, "todos")) {
+            return true;
+        }
+        self.my_names(lid).iter().any(|n| t.contains(&format!("@{n}")))
+    }
+
+    /// Nomes pelos quais a pessoa pode ser mencionada num grupo (minúsculos).
+    pub fn my_names(&self, lid: &str) -> Vec<String> {
+        let me = self.me_pk();
+        let mut v = vec![self.me.name.clone()];
+        if let Some(n) = self.group(lid).and_then(|g| g.meta.names.get(&me).cloned()) {
+            v.push(n);
+        }
+        v.into_iter().map(|n| n.trim().to_lowercase()).filter(|n| !n.is_empty()).collect()
     }
 
     pub fn toast(&mut self, s: impl Into<String>) {

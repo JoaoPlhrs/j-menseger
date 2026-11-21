@@ -17,7 +17,7 @@ pub enum ScreenError {
     Gone,
 }
 
-type Result<T> = std::result::Result<T, ScreenError>;
+pub type Result<T> = std::result::Result<T, ScreenError>;
 
 /// O que a pessoa pode escolher transmitir.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -26,6 +26,8 @@ pub enum SourceKind {
     Monitor,
     /// Uma janela específica de um aplicativo.
     Window,
+    /// A câmera do computador (`id` é o número da câmera).
+    Camera,
 }
 
 /// Uma opção de transmissão, como aparece na tela de escolha.
@@ -53,6 +55,7 @@ impl Source {
                     format!("{} · {}×{}", self.title, self.width, self.height)
                 }
             }
+            SourceKind::Camera => format!("Câmera: {}", self.title),
             SourceKind::Window => {
                 if self.app.is_empty() || self.app == self.title {
                     self.title.clone()
@@ -190,11 +193,13 @@ pub fn capture(source: &Source) -> Result<Frame> {
 pub enum Capturer {
     Monitor(Box<xcap::Monitor>),
     Window(Box<xcap::Window>),
+    Camera(Box<crate::camera::CameraCapture>),
 }
 
 impl Capturer {
     pub fn open(source: &Source) -> Result<Self> {
         match source.kind {
+            SourceKind::Camera => crate::camera::CameraCapture::open(source.id).map(|c| Capturer::Camera(Box::new(c))),
             SourceKind::Monitor => {
                 let m = xcap::Monitor::all()
                     .map_err(|e| ScreenError::List(e.to_string()))?
@@ -216,7 +221,11 @@ impl Capturer {
 
     /// Pega o quadro atual.
     pub fn grab(&self) -> Result<Frame> {
+        if let Capturer::Camera(c) = self {
+            return c.grab();
+        }
         let imagem = match self {
+            Capturer::Camera(_) => unreachable!(),
             Capturer::Monitor(m) => m
                 .capture_image()
                 .map_err(|e| ScreenError::Capture(e.to_string()))?,

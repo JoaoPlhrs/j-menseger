@@ -7,7 +7,7 @@ use crate::state::*;
 use crate::theme as t;
 use crate::ui::{self, El, BOLD, SEMI};
 use iced::widget::{button, column, container, mouse_area, row, scrollable, text, Space};
-use iced::{Alignment, Length};
+use iced::{Alignment, Color, Length};
 use jm_core::groups::Group;
 
 pub fn sidebar<'a>(m: &'a Main, g: &'a Group) -> El<'a> {
@@ -151,19 +151,39 @@ fn category<'a>(label: &str, add: Option<Msg>) -> El<'a> {
 /// Lista de membros à direita.
 pub fn members<'a>(m: &'a Main, g: &'a Group) -> El<'a> {
     let me = m.me_pk();
-    let mut admins: Vec<&String> = g.meta.members.iter().filter(|p| g.meta.is_admin(p)).collect();
-    let mut outros: Vec<&String> = g.meta.members.iter().filter(|p| !g.meta.is_admin(p)).collect();
+    // Como no Discord: admins primeiro, depois um bloco por cargo (pelo
+    // primeiro cargo da pessoa) e por fim quem não tem cargo.
     let ordem = |a: &&String, b: &&String| m.name_of(a).to_lowercase().cmp(&m.name_of(b).to_lowercase());
+    let mut secoes: Vec<(String, Option<Color>, Vec<&String>)> = Vec::new();
+    let mut admins: Vec<&String> = g.meta.members.iter().filter(|p| g.meta.is_admin(p)).collect();
     admins.sort_by(ordem);
+    secoes.push(("Admins".into(), None, admins));
+    for r in &g.meta.roles {
+        let mut v: Vec<&String> = g
+            .meta
+            .members
+            .iter()
+            .filter(|p| !g.meta.is_admin(p) && g.meta.roles_of(p).first().is_some_and(|x| x.id == r.id))
+            .collect();
+        v.sort_by(ordem);
+        let (rr, gg, bb) = jm_core::groups::ROLE_CORES[(r.c % 8) as usize];
+        secoes.push((r.n.clone(), Some(Color::from_rgb8(rr, gg, bb)), v));
+    }
+    let mut outros: Vec<&String> = g.meta.members.iter().filter(|p| !g.meta.is_admin(p) && g.meta.roles_of(p).is_empty()).collect();
     outros.sort_by(ordem);
+    secoes.push(("Membros".into(), None, outros));
     let mut col = column![].spacing(2).padding([12, 8]);
-    for (titulo, lista) in [("Admins", admins), ("Membros", outros)] {
+    for (titulo, _cor, lista) in secoes {
         if lista.is_empty() {
             continue;
         }
         col = col.push(container(text(format!("{} — {}", titulo.to_uppercase(), lista.len())).size(11.5).font(BOLD).color(t::FG_FAINT)).padding([8, 8]));
         for pk in lista {
             let nome = m.name_of(pk);
+            let cor_nome = g.meta.roles_of(pk).first().map(|r| {
+                let (rr, gg, bb) = jm_core::groups::ROLE_CORES[(r.c % 8) as usize];
+                Color::from_rgb8(rr, gg, bb)
+            });
             let falando = m.room.as_ref().filter(|r| r.lid == g.lid).is_some_and(|r| {
                 if *pk == me {
                     r.me_speaking && !r.muted
@@ -174,7 +194,7 @@ pub fn members<'a>(m: &'a Main, g: &'a Group) -> El<'a> {
             let mut linha = row![
                 ui::ringed(ui::avatar(&nome, m.tone_of(pk), m.pic_of(pk), 30.0), 30.0, falando.then(t::accent)),
                 column![
-                    text(ui::ellipsis(&nome, 18)).size(13.5).font(SEMI).color(t::FG),
+                    text(ui::ellipsis(&nome, 18)).size(13.5).font(SEMI).color(cor_nome.unwrap_or(t::FG)),
                     match m.listening(pk) {
                         Some(l) => El::from(
                             row![icon(Icon::Music, 11.0, crate::v_modal::SPOTIFY), text(ui::ellipsis(&format!("Ouvindo {}", l.s), 24)).size(11.5).color(t::FG_DIM)]

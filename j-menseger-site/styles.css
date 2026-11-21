@@ -82,6 +82,10 @@ a, button { touch-action: manipulation; }
 .botao.fantasma:hover { box-shadow: inset 0 0 0 1.5px var(--cinza); }
 .botao.roxo { background: var(--roxo); color: #fff; }
 .botao.roxo:hover { background: #b974f9; }
+.botao.amarelo { background: #f3c969; color: #1f1a0e; }
+.botao.amarelo:hover { background: #f6d688; }
+.botao.branco { background: var(--texto); color: #111; }
+.botao.branco:hover { background: #fff; }
 .plataformas { color: var(--cinza); font-size: 14px; margin: 20px 0 0; }
 
 /* conversa de exemplo: o elemento marcante da página */
@@ -155,9 +159,15 @@ a, button { touch-action: manipulation; }
 .dl { background: var(--grafite); border-radius: 22px; padding: 30px; box-shadow: inset 0 0 0 1px var(--linha); }
 .dl-pc { box-shadow: inset 0 3px 0 var(--roxo), inset 0 0 0 1px var(--linha); }
 .dl-cel { box-shadow: inset 0 3px 0 var(--verde), inset 0 0 0 1px var(--linha); }
+.dl-linux { box-shadow: inset 0 3px 0 #f3c969, inset 0 0 0 1px var(--linha); }
+.dl-mac { box-shadow: inset 0 3px 0 var(--texto), inset 0 0 0 1px var(--linha); }
+.dl.seu { box-shadow: inset 0 3px 0 var(--verde), inset 0 0 0 1.5px var(--verde); }
+.dl .seu-tag { display: inline-block; margin: 0 0 12px; padding: 4px 10px; border-radius: 99px; background: #0b2a1a; color: var(--verde); font-size: 13px; font-weight: 700; }
+.dl .botao + .botao { margin-top: 10px; }
+.dl code { font-size: 13.5px; background: var(--grafite-2); padding: 1px 6px; border-radius: 6px; overflow-wrap: anywhere; }
 .dl h3 { font: 800 34px/1 var(--display); letter-spacing: -0.03em; margin: 0 0 8px; }
 .versao { color: var(--cinza); font-size: 14.5px; margin: 0 0 22px; }
-.dl .botao { width: 100%; }
+.dl .botao { width: 100%; text-align: center; height: auto; min-height: 52px; padding-top: 12px; padding-bottom: 12px; line-height: 1.25; }
 .passos { margin: 26px 0 0; padding: 0; list-style: none; counter-reset: passo; display: flex; flex-direction: column; gap: 14px; }
 .passos li { counter-increment: passo; display: grid; grid-template-columns: 28px 1fr; gap: 10px; color: #c3c5ca; font-size: 15.5px; }
 .passos li::before { content: counter(passo); width: 26px; height: 26px; border-radius: 50%; background: var(--grafite-2); color: var(--texto); display: grid; place-items: center; font: 700 13px/1 var(--corpo); }

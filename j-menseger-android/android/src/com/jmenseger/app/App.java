@@ -44,6 +44,7 @@ public class App extends Application {
         instance = this;
         Notifier.channels(this);
         listenSpotify();
+        if (getSharedPreferences(Bridge.PREFS, MODE_PRIVATE).getBoolean("bg", false)) WakeJob.schedule(this);
     }
 
     /** A WebView (cria na primeira vez). `ctx` é a tela que vai mostrá-la. */
