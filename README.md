@@ -206,7 +206,7 @@ O app já vem com alguns relays públicos configurados. Você pode adicionar, re
 
 ## 📥 Instalação
 
-Os arquivos estão em **[jmenseger-site.vercel.app](https://jmenseger-site.vercel.app/#baixar)**.
+Os arquivos estão no **[site oficial](https://jmenseger-site.vercel.app/#baixar)** e também neste repositório, em [`j-menseger-site/downloads/`](j-menseger-site/downloads/).
 
 | Plataforma | Versão | Tamanho | Requisito |
 |---|---|---|---|
@@ -220,9 +220,22 @@ Os arquivos estão em **[jmenseger-site.vercel.app](https://jmenseger-site.verce
 
 <br />
 
-1. Abra o instalador baixado (`J-Menseger-0.6.0-instalador.exe`).
+[![Baixar para Windows](https://img.shields.io/badge/Baixar%20para%20Windows-37%20MB-0078D4?style=for-the-badge&logo=windows&logoColor=white)](https://jmenseger-site.vercel.app/downloads/J-Menseger-0.6.0-instalador.exe)
+
+Ou pelo repositório: [`J-Menseger-0.6.0-instalador.exe`](j-menseger-site/downloads/J-Menseger-0.6.0-instalador.exe)
+
+1. Abra o instalador baixado.
 2. Se aparecer **"O Windows protegeu o computador"**, clique em **Mais informações** e depois em **Executar assim mesmo**.
 3. Clique em **Instalar**. O J-Menseger abre sozinho no final.
+
+<details>
+<summary>🔐 SHA-256 deste arquivo</summary>
+
+```text
+0470858093217854446b0d4bd8b50f3e1ab6e61ed95bf2e4da4300e23c21b296  J-Menseger-0.6.0-instalador.exe
+```
+
+</details>
 
 </details>
 
@@ -233,19 +246,37 @@ Os arquivos estão em **[jmenseger-site.vercel.app](https://jmenseger-site.verce
 
 Escolha um dos dois arquivos:
 
-- **`.deb`** (Ubuntu, Debian, Mint): abra o arquivo e clique em **Instalar**. Ou, no terminal:
+**`.deb`** (Ubuntu, Debian, Mint)
 
-  ```bash
-  sudo apt install ./J-Menseger-0.6.0-linux-amd64.deb
-  ```
+[![Baixar .deb](https://img.shields.io/badge/Baixar%20.deb-16%20MB-FCC624?style=for-the-badge&logo=linux&logoColor=black)](https://jmenseger-site.vercel.app/downloads/J-Menseger-0.6.0-linux-amd64.deb)
 
-- **`.tar.gz`** (qualquer distribuição): extraia o arquivo e rode o instalador de dentro da pasta. Ele instala só para você, **sem `sudo`**:
+Ou pelo repositório: [`J-Menseger-0.6.0-linux-amd64.deb`](j-menseger-site/downloads/J-Menseger-0.6.0-linux-amd64.deb). Depois, abra o arquivo e clique em **Instalar**, ou no terminal:
 
-  ```bash
-  tar -xzf J-Menseger-0.6.0-linux-x86_64.tar.gz
-  cd J-Menseger-0.6.0-linux-x86_64
-  ./instalar.sh
-  ```
+```bash
+sudo apt install ./J-Menseger-0.6.0-linux-amd64.deb
+```
+
+**`.tar.gz`** (qualquer distribuição, sem `sudo`)
+
+[![Baixar .tar.gz](https://img.shields.io/badge/Baixar%20.tar.gz-21%20MB-FCC624?style=for-the-badge&logo=linux&logoColor=black)](https://jmenseger-site.vercel.app/downloads/J-Menseger-0.6.0-linux-x86_64.tar.gz)
+
+Ou pelo repositório: [`J-Menseger-0.6.0-linux-x86_64.tar.gz`](j-menseger-site/downloads/J-Menseger-0.6.0-linux-x86_64.tar.gz). Extraia e rode o instalador de dentro da pasta. Ele instala só para você:
+
+```bash
+tar -xzf J-Menseger-0.6.0-linux-x86_64.tar.gz
+cd J-Menseger-0.6.0-linux-x86_64
+./instalar.sh
+```
+
+<details>
+<summary>🔐 SHA-256 destes arquivos</summary>
+
+```text
+0f6327542a4cac4b861248e2e3c4109815c8dc48739b937d37208369c53d6a31  J-Menseger-0.6.0-linux-amd64.deb
+9749f147aa8a06dbf23fd3e1a6735bbb366759d9cea2cc7b3a48f89fb8e6a28d  J-Menseger-0.6.0-linux-x86_64.tar.gz
+```
+
+</details>
 
 </details>
 
@@ -254,11 +285,27 @@ Escolha um dos dois arquivos:
 
 <br />
 
-1. Escolha o arquivo certo para o seu Mac. Se em **Menu Apple → Sobre este Mac** aparecer "Chip: Apple M…", é o **Apple Silicon**. Se aparecer "Processador Intel", é o **Intel**.
-2. Abra o `.dmg` e arraste o J-Menseger para a pasta **Aplicativos**.
-3. Na primeira vez, o macOS avisa que não pôde verificar o app. Vá em **Ajustes do Sistema → Privacidade e Segurança** e clique em **Abrir Mesmo Assim**.
+Primeiro, confira o seu Mac em **Menu Apple → Sobre este Mac**. Se aparecer "Chip: Apple M…", use o **Apple Silicon**. Se aparecer "Processador Intel", use o **Intel**.
+
+[![Mac Apple Silicon](https://img.shields.io/badge/Mac%20Apple%20Silicon-17%20MB-000000?style=for-the-badge&logo=apple&logoColor=white)](https://jmenseger-site.vercel.app/downloads/J-Menseger-0.6.0-macos-arm64.dmg)
+[![Mac Intel](https://img.shields.io/badge/Mac%20Intel-19%20MB-000000?style=for-the-badge&logo=apple&logoColor=white)](https://jmenseger-site.vercel.app/downloads/J-Menseger-0.6.0-macos-x86_64.dmg)
+
+Ou pelo repositório: [Apple Silicon](j-menseger-site/downloads/J-Menseger-0.6.0-macos-arm64.dmg) · [Intel](j-menseger-site/downloads/J-Menseger-0.6.0-macos-x86_64.dmg)
+
+1. Abra o `.dmg` e arraste o J-Menseger para a pasta **Aplicativos**.
+2. Na primeira vez, o macOS avisa que não pôde verificar o app. Vá em **Ajustes do Sistema → Privacidade e Segurança** e clique em **Abrir Mesmo Assim**.
 
 > ℹ️ O app não passa pela notarização da Apple (que exige uma conta paga). Por isso esse aviso aparece na primeira vez.
+
+<details>
+<summary>🔐 SHA-256 destes arquivos</summary>
+
+```text
+f6cca9c42da6db8cda8d6dd3eb03394ec35d9ee08f7e4d51248c0b8f4c902f92  J-Menseger-0.6.0-macos-arm64.dmg
+5c0aa7d7fb359024bddc679bce7ae9277284a6f831d9c6f7b3c6c423e97ca31e  J-Menseger-0.6.0-macos-x86_64.dmg
+```
+
+</details>
 
 </details>
 
@@ -267,11 +314,24 @@ Escolha um dos dois arquivos:
 
 <br />
 
+[![Baixar APK](https://img.shields.io/badge/Baixar%20APK-0.7%20MB-3DDC84?style=for-the-badge&logo=android&logoColor=white)](https://jmenseger-site.vercel.app/downloads/J-Menseger-0.7.0-beta.apk)
+
+Ou pelo repositório: [`J-Menseger-0.7.0-beta.apk`](j-menseger-site/downloads/J-Menseger-0.7.0-beta.apk)
+
 1. Abra o arquivo `.apk` baixado no celular.
 2. Se o Android pedir, permita **instalar apps desta fonte**.
 3. Crie sua conta ou toque em **Restaurar com suas 12 palavras**.
 
 O app traz um atualizador próprio, para baixar e instalar novas versões sem precisar voltar ao site.
+
+<details>
+<summary>🔐 SHA-256 deste arquivo</summary>
+
+```text
+db6b94f7160da06ab9f8aa8e7dfdfe09553e8490c968912a82ca0d48d769f7e1  J-Menseger-0.7.0-beta.apk
+```
+
+</details>
 
 </details>
 
