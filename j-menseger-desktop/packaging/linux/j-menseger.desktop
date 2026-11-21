@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=J-Menseger
+Comment=Conversas cifradas de ponta a ponta
+Comment[en]=End-to-end encrypted messaging
+Exec=j-menseger
+Icon=j-menseger
+Terminal=false
+Categories=Network;InstantMessaging;
+Keywords=mensagens;conversa;chat;nostr;
+StartupWMClass=j-menseger

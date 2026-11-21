@@ -1,0 +1,7 @@
+{
+  "name": "jm-desktop-tools",
+  "private": true,
+  "type": "module",
+  "description": "Ferramentas de teste: relay Nostr local",
+  "dependencies": { "ws": "^8", "nostr-tools": "^2" }
+}

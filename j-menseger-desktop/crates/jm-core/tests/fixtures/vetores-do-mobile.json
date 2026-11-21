@@ -1,0 +1,89 @@
+{
+ "mnemonics": [
+  {
+   "words": "serra vinco falta careca usina anjo decote correio disparo rouco oriental manter",
+   "sk": "f26d78cca261308b86cf717cdc001552aec84a59e365ddac86c97de4d061ba80",
+   "pk": "471d8a47db0840d5ddcac2d887272fff2675874cf3136cc699a98e694c516297",
+   "npub": "npub1guwc537mppqdthw2ctvgwfe0lun8tp6v7vfke35e4x8xjnz3v2tscgct7s",
+   "nsec": "nsec17fkh3n9zvycghpk0w97dcqq422hvsjjeudjamtyxe977f5rph2qqx50fhv"
+  },
+  {
+   "words": "boletim donzela gasto incenso amizade expirar fivela reparo prisma redonda arraial crosta",
+   "sk": "b9a8e9cf83e710ab86974c8c2e48336e7249608ed34c57a1c13121c0c41f0af6",
+   "pk": "eb53d74cc7e93a21ede6ae2cfaf3b10107871118a901e971d819454b62c2eca1",
+   "npub": "npub1adfawnx8ayazrm0x4ck04ua3qyrcwygc4yq7juwcr9z5kckzajss9k60y6",
+   "nsec": "nsec1hx5wnnuruug2hp5hfjxzujpndeeyjcyw6dx90gwpxysup3qlptmq7285vd"
+  },
+  {
+   "words": "repolho guloso taxativo apito provador aeronave bocado polegada agasalho porta dolorido sucata",
+   "sk": "ff4a30d2c7faa51e44a1cb1079f728d46024850147074f139fbd2653992414f4",
+   "pk": "5f0e07f6462a8bf5fec463e42a50521a9f615cffaa976250f6e3dd53df958e4c",
+   "npub": "npub1tu8q0ajx929ltlkyv0jz55zjr20kzh8l42tky58ku0w48hu43exqyd8583",
+   "nsec": "nsec1la9rp5k8l2j3u39pevg8naeg63szfpgpgur57yulh5n98xfyzn6qw3rl4a"
+  },
+  {
+   "words": "degelo boreal manobrar malha apesar meiga feirante usado boato rebolar tempero corneta",
+   "sk": "984d86ee36f39b9950a4d2e5d72cbe93af0db24706d6fd2fac536d466e45e0d9",
+   "pk": "3086b787a568bd1a1f5cc1f57e8fa5925e35f000c16666ee9a6c8f2ef4a3a903",
+   "npub": "npub1xzrt0pa9dz73586uc86hara9jf0rtuqqc9nxdm56dj8jaa9r4ypsf42k99",
+   "nsec": "nsec1npxcdm3k7wdej59y6tjawt97jwhsmvj8qmt06tav2dk5vmj9urvsfd7pal"
+  },
+  {
+   "words": "travar adiante externo bissexto gargalo marquise privado acabado travar bovino turquesa rumo",
+   "sk": "4486aaf5fb4f9605b2660936e156079a83f8abb279bfb0b10ccd6432c3322803",
+   "pk": "5b3f28ce47bffcf100f02f6053bd47724c9b57e313ecbaf0a435a15886ac25c7",
+   "npub": "npub1tvlj3nj8hl70zq8s9as98028wfxfk4lrz0kt4u9yxks43p4vyhrsxdqg3d",
+   "nsec": "nsec1gjr24a0mf7tqtvnxpymwz4s8n2pl32aj0xlmpvgve4jr9sej9qps5tz4wz"
+  }
+ ],
+ "nip44": [
+  {
+   "de_sk": "f26d78cca261308b86cf717cdc001552aec84a59e365ddac86c97de4d061ba80",
+   "para_pk": "eb53d74cc7e93a21ede6ae2cfaf3b10107871118a901e971d819454b62c2eca1",
+   "texto": "Oi Beto! 👋",
+   "cifrado": "AmCJITXSarCwUSLUlZ0wBIGyPnw+nfZWYk7FEadsXAvoSisbS0bQtWAA51HA/WeE5akDyU2O+8smuo33lFQ0JcMSKC82J//eu2T6kOIDKkAgGALM47Wx88Lk2Bt7fqvmCAWm"
+  },
+  {
+   "de_sk": "f26d78cca261308b86cf717cdc001552aec84a59e365ddac86c97de4d061ba80",
+   "para_pk": "eb53d74cc7e93a21ede6ae2cfaf3b10107871118a901e971d819454b62c2eca1",
+   "texto": "acentuação e emoji 🎉",
+   "cifrado": "AraqSnJo8pT9+rOp1v5N4Am5hD0LCkQlPNFiEdYJF7+ZiPNvPD5JnuPuNnzd9gYSvB7vADHzr7okLGPiAi+QjDjm7/zp98iEC4KQA4vvl3PHAKlZJ5PzYBTkU1M/sQe52gmY"
+  },
+  {
+   "de_sk": "f26d78cca261308b86cf717cdc001552aec84a59e365ddac86c97de4d061ba80",
+   "para_pk": "eb53d74cc7e93a21ede6ae2cfaf3b10107871118a901e971d819454b62c2eca1",
+   "texto": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+   "cifrado": "Akw66L5FxlMIwEPhLUCTXQ7h+07W9zfpPgAcnpDdY9PruBFTZORWlEfhyUXu2BiMwMT5x/dXHCjaUHbIJd56NZQUWVORHgFvngw9k/rF3opxPRBs+9l0aJrVXevkoM6eQYcQbktWIXYyeUM/aWb3IUnu9Vl+hFsNySxSuaNLT8SiW8Fp2KOxa98C6ZsGKTov/fapD65IlXTWKPTmltfr8iazpOLBBJH2aFoOd7GS2kf9ymHeWR+Jls14nqnbM7Mlgk3f1I5FsRP3ODTRJeLOUU9V9vcKesHCpSzSHaMYEkE/sMAap/mecKSfdbIWgt7mju7uoShh29NwgbbcC7V14Tci8fU3cLCjyfLo5r0RykdTpKFNM3hBYhIK5/vqZ9tCzym1sMDE8Rwiwz5Rd5UqQSbP+EhYfdYfA6VEtOSKRMycB1KZjbAPOAyd6wD0P+ZG3ByG6LcgUSKB9DIUuLrqjxPu1CaI0PXY3kERuHobVfSMOFU7eBr5dEMC1VNJ1XTJ9FxKd22Iv6GZ0AeunlK7ptMjMM7J6Uc/OqiESsNqWSw2MqP8QjPcfDIAHB5EZdB8bISFUObzSHhn+AHp/0XRNCVgFNA0rEASHkA29nOOfORz1py8HwYkQS19meQzciJawCflfKtkPm9S4vZNxW1cgWGdVnsIejyqNw1SOXzgiciJrGXIrEdoffqK6Wz1XhO08ZQ8Uvyy2yhDnUnbCxNWRG8m/6cwnC1vk+fL8qoiqQ/YCu4UqrS8wXFCXi4vDh7GF7o/"
+  }
+ ],
+ "wrap": {
+  "destinatario_sk": "b9a8e9cf83e710ab86974c8c2e48336e7249608ed34c57a1c13121c0c41f0af6",
+  "rumor_esperado": {
+   "kind": 14,
+   "content": "mensagem dentro do envelope",
+   "tags": [
+    [
+     "p",
+     "eb53d74cc7e93a21ede6ae2cfaf3b10107871118a901e971d819454b62c2eca1"
+    ]
+   ],
+   "created_at": 1794704087,
+   "pubkey": "471d8a47db0840d5ddcac2d887272fff2675874cf3136cc699a98e694c516297",
+   "id": "1f2ebf3673ed04769b7e66918d8d8591f5df6a24f244ae8ceb4673b4a93cd27e"
+  },
+  "evento": {
+   "kind": 1059,
+   "content": "Avf7UNG/3WQN3n3uyDmsNpMVCaVnUc6bgoWWzkmMp7SZhgKiS/QO3jotKlvKgDHxFcAgBrqn6LJSHwA8xrRZJNdFqIzeqrWMuxYhXLajZYSSMp6UwmY2n3WI5QJCeNhGD2Fd5kIw8A/eFsFcFX52rEuRCRn7/fDOWbvinEV1GQ3m2py+50fbA26qhGro3mTXlrjMweqcbQLvGYNRghtqo6K3qUZfH4jKRiN1HaVKttr/m1tRUY9yVI7gdL++0QSS3XV5CKgnbeWUeR8sPtoV/zl6rn/W3Y5jtr5AhATW3SZXn6GEHPx+yiAbsQIH1aPmtnnejLhn+R0DGY7mZP9TIbwAdlKF4VrvtRTmpGHJq3fC2BOpRnfKfZEQ8Nh9aqb+gGIP8jTtGO36wlD+JVRTeHJ0C99VEbjn2u5e9L3wR2AGVGgRih0uf+1D86Mgp/7tpiPOaJyOyiQ2lxZtMDtES1CoDDcW8W3XKOBBx5Veo0FM0p/iqPzmDNV4ylfqlhA0QFsyg7Rd5/GT0c9RkXE6l5lVliZV85031ZLYK7Z15MP3e5zyncYLy0RfHlWCUydum+iTk2bWKaHVK2t69lfdP0S1my01GsTCGOHlbLyb0eE1gHzvH1WctDFJRhZ+F9thu3HNJ0hRnxrP5f+vnRJow8/D7L/NH55SLSmDcAp0mpZiZCSNt0p0nLhLdpbh8sD3JFgMSecg+1s94J2v+2kSXhvYIZr4NIeEN6g3g6YnJtIJC/qUeUz+IfG2zA1oV/2BbkUOZ98VMwz/oM+tnW4GfLbnSZNcnInWZ5p2sSCAJmo4/eZuXf56QisLFrl8+BrY7/MU3nryplgR6JmUI/DN6LzAd25xKGQSRvVZQyoACZfzjk+MdLUyc62RGqXvWH0gOB4HZVCl3AZ2Yipy43hSi5YSrsc0WeBf7Iq0177WYbryX07cTN9pGC9LaXTyovDLYH2ERAEWOkYPSfLgyJ5p+AayJhMgGXEOgWLElR7yfYHw4D2U9/l5PLoNhIlGaD7hPUEQE8ZFQIMc25akhks8dIAXxgjXcoi6HWMHQlBXe1B9x7ISuvik+DeEwwJTGoDl3q0cbAhTxBii2cLhGbj8xvYp++oNuytFSltDEaIKMX6/rctk/5+oolJAKsS0MFg1jd26TJxaLpNUt+VkEnEk41uXOLkrb1mb17QVTXfdyNppjIFF/T9n2o1J5IRllZHubvw72YE5tPoJLOqkKeAN5X16vAPUdfhraM/ic4FODZ0wGNf5nfWmjDEpxmKc0mxDU62y",
+   "created_at": 1794696887,
+   "tags": [
+    [
+     "p",
+     "eb53d74cc7e93a21ede6ae2cfaf3b10107871118a901e971d819454b62c2eca1"
+    ]
+   ],
+   "pubkey": "5f0e07f6462a8bf5fec463e42a50521a9f615cffaa976250f6e3dd53df958e4c",
+   "id": "5332ee3ffbc2e3a4e686c2b240f8ac834b28131c6fd349d5b606864d9a66409f",
+   "sig": "d2c0f4a368a879a5b443b1a261c11490f9312c8f33bd3ac0ac151000d3636f3b95b92d71e948ad2abb1bc36f682c144cf08d5a2f2b5a5b8b0bef2a56073879bf"
+  }
+ }
+}

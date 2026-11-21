@@ -1,0 +1,28 @@
+[package]
+name = "jm-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Núcleo do J-Menseger: protocolo cifrado, relays e armazenamento local"
+
+[dependencies]
+anyhow.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "sync", "time", "fs"] }
+tracing.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+nostr = { version = "0.45", features = ["std", "all-nips", "os-rng"] }
+nostr-sdk = { version = "0.45", default-features = false, features = ["rustls-tls-webpki-roots"] }
+rusqlite = { version = "0.42", features = ["bundled"] }
+base64 = "0.22"
+bip39 = { version = "2", features = ["portuguese", "std"] }
+sha2 = "0.10"
+pbkdf2 = { version = "0.12", default-features = false, features = ["hmac"] }
+hex = "0.4"
+rand = "0.9"
+futures-util = "0.3"
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["full"] }

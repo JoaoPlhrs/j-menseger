@@ -228,11 +228,23 @@ Os arquivos estão em **[jmenseger-site.vercel.app](https://jmenseger-site.verce
 
 | Parte | Tecnologia |
 |---|---|
-| App de computador | **Rust** (com `nostr-sdk`) + **JavaScript** na interface, instalador NSIS |
-| App Android | Interface web empacotada em um **WebView** (a mesma interface do PC) |
-| Interface web | **JavaScript** com `nostr-tools` |
-| Protocolo | **Nostr** (relays públicos, sem servidor central) |
+| App de computador | **Rust puro** com interface **Iced 0.14**, desenhada pela GPU via `wgpu` (com retorno por software). Sem WebView, Electron ou Tauri |
+| Protocolo (PC) | Crate **`nostr` 0.45** (rust-nostr) |
+| Chamadas (PC) | **webrtc-rs**, o mesmo transporte do celular. Vídeo com **libvpx** (a única parte em C) |
+| App Android | Interface web (**HTML, CSS e JavaScript** com `nostr-tools`) dentro de um **WebView**, com uma camada **Java** fina para Keystore, notificações e chamada em tela cheia |
+| Protocolo (celular) | **Nostr** (relays públicos, sem servidor central) |
 | Fontes | Bricolage Grotesque e Figtree |
+
+> Os testes de compatibilidade entre PC e celular estão em [`j-menseger-desktop/crates/jm-core/tests/`](j-menseger-desktop/crates/jm-core/tests/).
+
+### 📋 Status atual
+
+| Área | Situação |
+|---|---|
+| Mensagens, grupos, salas de voz, soundboard, transmissão de tela, ajustes | ✅ Pronto no PC (conferido com o celular, detalhes em [`PARIDADE.md`](j-menseger-desktop/PARIDADE.md)) |
+| Enviar a câmera do computador | ❌ Não implementado |
+| Ler QR pela câmera | ❌ Não implementado |
+| Instalador e executável do Windows | ⚠️ Gerados por compilação cruzada no Linux, **não testados num Windows** |
 
 <details>
 <summary><b>Diagrama: como uma mensagem viaja</b></summary>
@@ -278,13 +290,22 @@ O APK pede estas permissões (lidas do `AndroidManifest.xml`). As finalidades ma
 ```text
 j-menseger/
 ├── README.md
-└── docs/
-    ├── gifs/          # animações usadas no README
-    ├── img/           # capturas de tela e logo
-    └── LICENCA-sons.txt # licenças dos sons do soundboard
+├── docs/                      # mídia deste README
+│   ├── gifs/                  # animações
+│   ├── img/                   # capturas de tela e logo
+│   └── LICENCA-sons.txt       # licenças dos sons do soundboard
+├── j-menseger-desktop/        # app de computador (Rust + Iced)
+│   ├── ARQUITETURA.md         # decisões técnicas
+│   ├── PARIDADE.md            # comparação item a item com o celular
+│   └── crates/                # jm-core, jm-app, jm-media
+├── j-menseger-android/        # app Android (WebView + Java)
+│   ├── README.md              # como montar e de onde veio o código
+│   ├── web/                   # interface web (HTML, CSS, JS)
+│   └── android/               # camada Java
+└── j-menseger-site/           # site de divulgação e downloads
 ```
 
-> O código-fonte do app será incluído aqui.
+> ℹ️ A pasta `j-menseger-android/` foi reconstruída a partir do APK 0.4.0-beta, porque o código-fonte original se perdeu. Veja o [README dela](j-menseger-android/README.md) para os detalhes.
 
 ---
 
